@@ -83,6 +83,8 @@ pub(crate) use ios::*;
 pub(crate) use mac::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::native_controls;
+#[cfg(target_os = "ios")]
+pub(crate) use ios::native_controls;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::gpui_surface;
 #[cfg(any(test, feature = "test-support"))]

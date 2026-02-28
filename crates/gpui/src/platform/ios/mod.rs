@@ -1,3 +1,5 @@
+pub(crate) mod native_controls;
+
 #[cfg(feature = "font-kit")]
 mod open_type;
 #[cfg(feature = "font-kit")]
