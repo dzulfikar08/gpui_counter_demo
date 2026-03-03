@@ -617,7 +617,14 @@ impl Element for NativeTableView {
             let items = self.items.clone();
             let selected_index = self.selected_index;
             let row_height = self.row_height;
+            let column_title = self.column_title.clone();
+            let show_header = self.show_header;
+            let alternating_rows = self.alternating_rows;
             let allows_multiple_selection = self.allows_multiple_selection;
+            let table_style = self.table_style;
+            let row_size_style = self.row_size_style;
+            let selection_highlight_style = self.selection_highlight_style;
+            let grid_mask = self.grid_mask;
 
             window.with_optional_element_state::<NativeTableViewState, _>(
                 id,

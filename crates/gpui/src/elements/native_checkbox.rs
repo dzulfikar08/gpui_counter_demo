@@ -3,9 +3,9 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use crate::{
-    AbsoluteLength, App, Bounds, DefiniteLength, Element, ElementId, GlobalElementId,
+    px, AbsoluteLength, App, Bounds, DefiniteLength, Element, ElementId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, Length, Pixels, SharedString, Style,
-    StyleRefinement, Styled, Window, px,
+    StyleRefinement, Styled, Window,
 };
 
 use super::native_element_helpers::schedule_native_callback;
@@ -155,8 +155,10 @@ impl Element for NativeCheckbox {
                 Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(width))));
         }
         if matches!(style.size.height, Length::Auto) {
-            style.size.height =
-                Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(18.0))));
+            let default_height = if cfg!(target_os = "ios") { 31.0 } else { 18.0 };
+            style.size.height = Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                px(default_height),
+            )));
         }
 
         let layout_id = window.request_layout(style, [], cx);

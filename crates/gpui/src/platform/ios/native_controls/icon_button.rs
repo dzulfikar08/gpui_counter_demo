@@ -29,6 +29,13 @@ pub(crate) unsafe fn set_native_icon_button_symbol(button: id, symbol_name: &str
         let image: id = msg_send![class!(UIImage), systemImageNamed: ns_string(symbol_name)];
         if image != nil {
             let _: () = msg_send![button, setImage: image forState: 0u64];
+            if msg_send![button, respondsToSelector: sel!(configuration)] {
+                let configuration: id = msg_send![button, configuration];
+                if configuration != nil {
+                    let _: () = msg_send![configuration, setImage: image];
+                    let _: () = msg_send![button, setConfiguration: configuration];
+                }
+            }
         }
     }
 }

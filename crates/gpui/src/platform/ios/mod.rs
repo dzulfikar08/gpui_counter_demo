@@ -5,40 +5,41 @@ mod open_type;
 #[cfg(feature = "font-kit")]
 mod text_system;
 
+use crate::platform::metal::renderer::{InstanceBufferPool, MetalRenderer, SharedRenderResources};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchEventResult, DisplayId, DummyKeyboardMapper, ForegroundExecutor, GLOBAL_THREAD_TIMINGS,
     GpuSpecs, KeyDownEvent, KeyUpEvent, Keymap, Keystroke, Menu, MenuItem, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NoopTextSystem, OwnedMenu, PathPromptOptions, Pixels, PinchEvent, Platform, PlatformAtlas,
+    NoopTextSystem, OwnedMenu, PathPromptOptions, PinchEvent, Pixels, Platform, PlatformAtlas,
     PlatformDispatcher, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point,
     Priority, PromptButton, RequestFrameOptions, RotationEvent, ScrollDelta, ScrollWheelEvent,
-    Task, TaskTiming, ThermalState, THREAD_TIMINGS, ThreadTaskTimings, TouchPhase,
+    THREAD_TIMINGS, Task, TaskTiming, ThermalState, ThreadTaskTimings, TouchPhase,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
     point, px, size,
 };
-use crate::platform::metal::renderer::{InstanceBufferPool, MetalRenderer, SharedRenderResources};
-use foreign_types::ForeignType as _;
 use anyhow::{Result, anyhow};
-use ctor::ctor;
-use futures::channel::oneshot;
-use objc::{
-    class, msg_send,
-    declare::ClassDecl,
-    runtime::{Class, Object, Sel, BOOL, NO, YES},
-    sel, sel_impl,
-};
-use parking_lot::Mutex;
-use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, UiKitWindowHandle, WindowHandle,
-};
 use core_foundation::{
     base::{CFType, CFTypeRef, OSStatus, TCFType},
     boolean::CFBoolean,
     data::CFData,
     dictionary::{CFDictionary, CFDictionaryRef, CFMutableDictionary},
     string::{CFString, CFStringRef},
+};
+use ctor::ctor;
+use foreign_types::ForeignType as _;
+use futures::channel::oneshot;
+use objc::{
+    class,
+    declare::ClassDecl,
+    msg_send,
+    runtime::{BOOL, Class, NO, Object, Sel, YES},
+    sel, sel_impl,
+};
+use parking_lot::Mutex;
+use raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, UiKitWindowHandle, WindowHandle,
 };
 use std::{
     cell::Cell,
@@ -149,8 +150,8 @@ static mut GPUI_VIEW_CLASS: *const Class = std::ptr::null();
 #[ctor]
 unsafe fn register_gpui_view_class() {
     let superclass = class!(UIView);
-    let mut decl = ClassDecl::new("GPUIView", superclass)
-        .expect("failed to declare GPUIView class");
+    let mut decl =
+        ClassDecl::new("GPUIView", superclass).expect("failed to declare GPUIView class");
 
     // Ivar to hold a raw pointer to Rc<Mutex<IosWindowState>>
     decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
@@ -218,7 +219,8 @@ unsafe fn register_gpui_view_class() {
     // UITextFieldDelegate — intercept text from the hidden UITextField keyboard proxy
     decl.add_method(
         sel!(textField:shouldChangeCharactersInRange:replacementString:),
-        handle_text_field_change as extern "C" fn(&Object, Sel, *mut Object, NSRange, *mut Object) -> BOOL,
+        handle_text_field_change
+            as extern "C" fn(&Object, Sel, *mut Object, NSRange, *mut Object) -> BOOL,
     );
     decl.add_method(
         sel!(textFieldShouldReturn:),
@@ -380,7 +382,11 @@ fn dispatch_input(
 
 unsafe extern "C" fn become_first_responder_trampoline(context: *mut c_void) {
     let view = context as *mut Object;
-    let _: BOOL = msg_send![view, becomeFirstResponder];
+    log::debug!(
+        "[keyboard] become_first_responder_trampoline fired — calling becomeFirstResponder on proxy"
+    );
+    let result: BOOL = msg_send![view, becomeFirstResponder];
+    log::debug!("[keyboard] becomeFirstResponder returned: {}", result != NO);
 }
 
 unsafe extern "C" fn resign_first_responder_trampoline(context: *mut c_void) {
@@ -407,6 +413,12 @@ extern "C" fn handle_touches_began(
     };
 
     let modifiers = state.lock().current_modifiers;
+    log::trace!(
+        "[touch] touchesBegan at ({}, {}), click_count={}",
+        position.x.0,
+        position.y.0,
+        click_count
+    );
     let result = dispatch_input(
         &state,
         PlatformInput::MouseDown(MouseDownEvent {
@@ -417,20 +429,31 @@ extern "C" fn handle_touches_began(
             first_mouse: false,
         }),
     );
+    log::trace!(
+        "[touch] dispatch_input result: propagate={}, default_prevented={}",
+        result.propagate,
+        result.default_prevented
+    );
 
-    // Show the software keyboard by making the hidden UITextField proxy
-    // become first responder. Deferred to next run loop iteration because
-    // UIKit may not allow first responder changes during touch handling.
-    let proxy = state.lock().keyboard_proxy;
-    if !proxy.is_null() {
-        unsafe {
-            let is_first: BOOL = msg_send![proxy, isFirstResponder];
-            if is_first == NO {
-                dispatch_async_f(
-                    dispatch_get_main_queue_ptr(),
-                    proxy as *mut c_void,
-                    Some(become_first_responder_trampoline),
+    // Only show the software keyboard if the touch was handled by an input
+    // element (default_prevented means an input field consumed the event).
+    let has_input_handler = state.lock().input_handler.is_some();
+    if has_input_handler && result.default_prevented {
+        let proxy = state.lock().keyboard_proxy;
+        if !proxy.is_null() {
+            unsafe {
+                let is_first: BOOL = msg_send![proxy, isFirstResponder];
+                log::debug!(
+                    "[keyboard] requesting first responder (currently_first={})",
+                    is_first != NO
                 );
+                if is_first == NO {
+                    dispatch_async_f(
+                        dispatch_get_main_queue_ptr(),
+                        proxy as *mut c_void,
+                        Some(become_first_responder_trampoline),
+                    );
+                }
             }
         }
     }
@@ -588,8 +611,7 @@ extern "C" fn handle_trait_collection_change(
         let current_style: isize = msg_send![current_traits, userInterfaceStyle];
 
         if !_previous_trait_collection.is_null() {
-            let previous_style: isize =
-                msg_send![_previous_trait_collection, userInterfaceStyle];
+            let previous_style: isize = msg_send![_previous_trait_collection, userInterfaceStyle];
             if current_style == previous_style {
                 return;
             }
@@ -683,11 +705,7 @@ extern "C" fn handle_text_field_change(
     NO
 }
 
-extern "C" fn handle_text_field_return(
-    this: &Object,
-    _sel: Sel,
-    _text_field: *mut Object,
-) -> BOOL {
+extern "C" fn handle_text_field_return(this: &Object, _sel: Sel, _text_field: *mut Object) -> BOOL {
     let Some(state) = (unsafe { get_window_state(this) }) else {
         return YES;
     };
@@ -712,6 +730,9 @@ extern "C" fn handle_text_field_return(
 // ---------------------------------------------------------------------------
 
 extern "C" fn can_become_first_responder(_this: &Object, _sel: Sel) -> BOOL {
+    log::trace!(
+        "[keyboard] GPUIView canBecomeFirstResponder called — returning YES (for hardware keyboard)"
+    );
     YES
 }
 
@@ -719,7 +740,11 @@ extern "C" fn has_text(this: &Object, _sel: Sel) -> BOOL {
     let Some(state) = (unsafe { get_window_state(this) }) else {
         return YES;
     };
-    if state.lock().input_handler.is_some() { YES } else { YES }
+    if state.lock().input_handler.is_some() {
+        YES
+    } else {
+        YES
+    }
 }
 
 extern "C" fn insert_text(this: &Object, _sel: Sel, text_obj: *mut Object) {
@@ -731,7 +756,9 @@ extern "C" fn insert_text(this: &Object, _sel: Sel, text_obj: *mut Object) {
         if utf8.is_null() {
             return;
         }
-        let text = std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned();
+        let text = std::ffi::CStr::from_ptr(utf8)
+            .to_string_lossy()
+            .into_owned();
         if text.is_empty() {
             return;
         }
@@ -799,10 +826,18 @@ extern "C" fn delete_backward(this: &Object, _sel: Sel) {
 }
 
 // UITextInputTraits
-extern "C" fn keyboard_type(_this: &Object, _sel: Sel) -> isize { 0 } // UIKeyboardTypeDefault
-extern "C" fn autocorrection_type(_this: &Object, _sel: Sel) -> isize { 1 } // UITextAutocorrectionTypeNo
-extern "C" fn autocapitalization_type(_this: &Object, _sel: Sel) -> isize { 0 } // UITextAutocapitalizationTypeNone
-extern "C" fn spell_checking_type(_this: &Object, _sel: Sel) -> isize { 1 } // UITextSpellCheckingTypeNo
+extern "C" fn keyboard_type(_this: &Object, _sel: Sel) -> isize {
+    0
+} // UIKeyboardTypeDefault
+extern "C" fn autocorrection_type(_this: &Object, _sel: Sel) -> isize {
+    1
+} // UITextAutocorrectionTypeNo
+extern "C" fn autocapitalization_type(_this: &Object, _sel: Sel) -> isize {
+    0
+} // UITextAutocapitalizationTypeNone
+extern "C" fn spell_checking_type(_this: &Object, _sel: Sel) -> isize {
+    1
+} // UITextSpellCheckingTypeNo
 
 // ---------------------------------------------------------------------------
 // Hardware keyboard via UIPresses (iOS 13.4+)
@@ -909,7 +944,11 @@ extern "C" fn handle_presses_began(
                 if !chars.is_null() {
                     let utf8: *const std::os::raw::c_char = msg_send![chars, UTF8String];
                     if !utf8.is_null() {
-                        Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned())
+                        Some(
+                            std::ffi::CStr::from_ptr(utf8)
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
                     } else {
                         None
                     }
@@ -1110,18 +1149,18 @@ extern "C" fn handle_scroll_pan(this: &Object, _sel: Sel, gesture: *mut Object) 
         };
 
         // Get translation (cumulative) and reset to zero for incremental deltas
-        let translation: CGPoint = msg_send![gesture, translationInView: this as *const Object as *mut Object];
+        let translation: CGPoint =
+            msg_send![gesture, translationInView: this as *const Object as *mut Object];
         let zero = CGPoint { x: 0.0, y: 0.0 };
-        let _: () = msg_send![gesture, setTranslation: zero inView: this as *const Object as *mut Object];
+        let _: () =
+            msg_send![gesture, setTranslation: zero inView: this as *const Object as *mut Object];
 
         // Get position of the gesture centroid
-        let location: CGPoint = msg_send![gesture, locationInView: this as *const Object as *mut Object];
+        let location: CGPoint =
+            msg_send![gesture, locationInView: this as *const Object as *mut Object];
         let position = point(px(location.x as f32), px(location.y as f32));
 
-        let delta = ScrollDelta::Pixels(point(
-            px(translation.x as f32),
-            px(translation.y as f32),
-        ));
+        let delta = ScrollDelta::Pixels(point(px(translation.x as f32), px(translation.y as f32)));
 
         let modifiers = state.lock().current_modifiers;
         dispatch_input(
@@ -1163,10 +1202,7 @@ extern "C" fn handle_single_finger_pan(this: &Object, _sel: Sel, gesture: *mut O
             msg_send![gesture, locationInView: this as *const Object as *mut Object];
         let position = point(px(location.x as f32), px(location.y as f32));
 
-        let delta = ScrollDelta::Pixels(point(
-            px(translation.x as f32),
-            px(translation.y as f32),
-        ));
+        let delta = ScrollDelta::Pixels(point(px(translation.x as f32), px(translation.y as f32)));
 
         let modifiers = state.lock().current_modifiers;
         dispatch_input(
@@ -1537,8 +1573,7 @@ impl IosKeyboardLayout {
                 };
             }
             // Get active text input mode
-            let input_modes: *mut Object =
-                msg_send![class!(UITextInputMode), activeInputModes];
+            let input_modes: *mut Object = msg_send![class!(UITextInputMode), activeInputModes];
             if !input_modes.is_null() {
                 let count: usize = msg_send![input_modes, count];
                 if count > 0 {
@@ -1746,9 +1781,8 @@ fn detect_system_appearance() -> WindowAppearance {
 }
 
 extern "C" fn dispatch_trampoline(context: *mut c_void) {
-    let runnable = unsafe {
-        crate::RunnableVariant::from_raw(NonNull::new_unchecked(context.cast::<()>()))
-    };
+    let runnable =
+        unsafe { crate::RunnableVariant::from_raw(NonNull::new_unchecked(context.cast::<()>())) };
     IosDispatcher::run_runnable(runnable);
 }
 
@@ -1854,9 +1888,13 @@ impl IosPlatform {
                 foreground_executor,
                 text_system: {
                     #[cfg(feature = "font-kit")]
-                    { Arc::new(IosTextSystem::new()) }
+                    {
+                        Arc::new(IosTextSystem::new())
+                    }
                     #[cfg(not(feature = "font-kit"))]
-                    { Arc::new(NoopTextSystem::new()) }
+                    {
+                        Arc::new(NoopTextSystem::new())
+                    }
                 },
                 display: Rc::new(IosDisplay::primary()),
                 active_window: None,
@@ -1964,7 +2002,9 @@ impl Platform for IosPlatform {
     }
 
     fn register_url_scheme(&self, _url: &str) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("register_url_scheme is not yet implemented on iOS")))
+        Task::ready(Err(anyhow!(
+            "register_url_scheme is not yet implemented on iOS"
+        )))
     }
 
     fn prompt_for_paths(
@@ -2070,7 +2110,9 @@ impl Platform for IosPlatform {
     }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
-        Err(anyhow!("auxiliary executable lookup is not implemented on iOS"))
+        Err(anyhow!(
+            "auxiliary executable lookup is not implemented on iOS"
+        ))
     }
 
     fn set_cursor_style(&self, _style: CursorStyle) {}
@@ -2092,8 +2134,8 @@ impl Platform for IosPlatform {
                             .to_string_lossy()
                             .into_owned();
                         // Check for metadata in custom pasteboard type
-                        let meta_type_str = std::ffi::CString::new("dev.gpui.clipboard-metadata")
-                            .unwrap();
+                        let meta_type_str =
+                            std::ffi::CString::new("dev.gpui.clipboard-metadata").unwrap();
                         let meta_type: *mut Object = msg_send![class!(NSString),
                             stringWithUTF8String: meta_type_str.as_ptr()];
                         let meta_data: *mut Object =
@@ -2146,8 +2188,7 @@ impl Platform for IosPlatform {
                         stringWithUTF8String: std::ffi::CString::new(metadata.as_str()).unwrap_or_default().as_ptr()
                     ];
                     let encoding: usize = 4; // NSUTF8StringEncoding
-                    let meta_data: *mut Object =
-                        msg_send![meta_ns, dataUsingEncoding: encoding];
+                    let meta_data: *mut Object = msg_send![meta_ns, dataUsingEncoding: encoding];
                     let _: () =
                         msg_send![pasteboard, setData: meta_data forPasteboardType: meta_type];
                 }
@@ -2213,7 +2254,7 @@ impl Platform for IosPlatform {
                 match status {
                     ios_security::errSecSuccess => {}
                     ios_security::errSecItemNotFound | ios_security::errSecUserCanceled => {
-                        return Ok(None)
+                        return Ok(None);
                     }
                     _ => anyhow::bail!("reading password failed: {status}"),
                 }
@@ -2277,8 +2318,7 @@ impl Platform for IosPlatform {
             (*observer).set_ivar::<*mut c_void>(CALLBACK_IVAR, callback_ptr);
 
             let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
-            let name_bytes =
-                b"UITextInputCurrentInputModeDidChangeNotification\0";
+            let name_bytes = b"UITextInputCurrentInputModeDidChangeNotification\0";
             let name: *mut Object =
                 msg_send![class!(NSString), stringWithUTF8String: name_bytes.as_ptr()];
             let _: () = msg_send![center,
@@ -2347,128 +2387,136 @@ struct IosWindowState {
 pub(crate) struct IosWindow(Rc<Mutex<IosWindowState>>);
 
 impl IosWindow {
-    fn new(handle: AnyWindowHandle, options: WindowParams, display: Rc<dyn PlatformDisplay>) -> Self {
+    fn new(
+        handle: AnyWindowHandle,
+        options: WindowParams,
+        display: Rc<dyn PlatformDisplay>,
+    ) -> Self {
         log::debug!("creating iOS window");
-        let (ui_window, ui_view_controller, ui_view, keyboard_proxy, gesture_delegate, bounds, scale_factor) =
-            unsafe {
-                let screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
-                let screen_bounds: CGRect = msg_send![screen, bounds];
-                let scale: f64 = msg_send![screen, scale];
+        let (
+            ui_window,
+            ui_view_controller,
+            ui_view,
+            keyboard_proxy,
+            gesture_delegate,
+            bounds,
+            scale_factor,
+        ) = unsafe {
+            let screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
+            let screen_bounds: CGRect = msg_send![screen, bounds];
+            let scale: f64 = msg_send![screen, scale];
 
-                // On iOS 13+, UIWindow must be associated with a UIWindowScene.
-                let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
-                let scenes: *mut Object = msg_send![app, connectedScenes];
-                let all_scenes: *mut Object = msg_send![scenes, allObjects];
-                let scene_count: usize = msg_send![all_scenes, count];
-                let ui_window: *mut Object = if scene_count > 0 {
-                    let scene: *mut Object = msg_send![all_scenes, objectAtIndex: 0usize];
-                    log::info!("creating UIWindow with UIWindowScene");
-                    let w: *mut Object = msg_send![class!(UIWindow), alloc];
-                    msg_send![w, initWithWindowScene: scene]
-                } else {
-                    log::warn!("no UIWindowScene found, falling back to initWithFrame:");
-                    let w: *mut Object = msg_send![class!(UIWindow), alloc];
-                    msg_send![w, initWithFrame: screen_bounds]
-                };
-
-                let ui_view_controller: *mut Object = msg_send![class!(UIViewController), new];
-
-                let ui_view: *mut Object = msg_send![GPUI_VIEW_CLASS, alloc];
-                let ui_view: *mut Object = msg_send![ui_view, initWithFrame: screen_bounds];
-
-                // Enable multi-touch for all gesture recognizers
-                let _: () = msg_send![ui_view, setMultipleTouchEnabled: YES];
-
-                // Hidden UITextField as keyboard proxy — shows software keyboard
-                // when it becomes first responder. GPUIView is its delegate.
-                let proxy_frame = CGRect {
-                    origin: CGPoint { x: 0.0, y: -100.0 },
-                    size: CGSize { width: 1.0, height: 1.0 },
-                };
-                let keyboard_proxy: *mut Object = msg_send![class!(UITextField), alloc];
-                let keyboard_proxy: *mut Object = msg_send![keyboard_proxy, initWithFrame: proxy_frame];
-                let _: () = msg_send![keyboard_proxy, setAlpha: 0.01f64];
-                let _: () = msg_send![keyboard_proxy, setAutocorrectionType: 1isize]; // UITextAutocorrectionTypeNo
-                let _: () = msg_send![keyboard_proxy, setAutocapitalizationType: 0isize]; // UITextAutocapitalizationTypeNone
-                let _: () = msg_send![keyboard_proxy, setSpellCheckingType: 1isize]; // UITextSpellCheckingTypeNo
-                let _: () = msg_send![ui_view, addSubview: keyboard_proxy];
-                // GPUIView is the delegate — intercepts typed text via textField:shouldChangeCharactersInRange:
-                let _: () = msg_send![keyboard_proxy, setDelegate: ui_view];
-
-                // Create gesture delegate for simultaneous recognition
-                let gesture_delegate: *mut Object =
-                    msg_send![GPUI_GESTURE_DELEGATE_CLASS, new];
-
-                // Two-finger pan gesture for scroll
-                let pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
-                let pan: *mut Object =
-                    msg_send![pan, initWithTarget: ui_view action: sel!(handleScrollPan:)];
-                let _: () = msg_send![pan, setMinimumNumberOfTouches: 2usize];
-                let _: () = msg_send![pan, setMaximumNumberOfTouches: 2usize];
-                let _: () = msg_send![pan, setDelegate: gesture_delegate];
-                let _: () = msg_send![ui_view, addGestureRecognizer: pan];
-
-                // Single-finger pan gesture for scroll
-                let single_pan: *mut Object =
-                    msg_send![class!(UIPanGestureRecognizer), alloc];
-                let single_pan: *mut Object = msg_send![single_pan,
-                    initWithTarget: ui_view action: sel!(handleSingleFingerPan:)];
-                let _: () = msg_send![single_pan, setMinimumNumberOfTouches: 1usize];
-                let _: () = msg_send![single_pan, setMaximumNumberOfTouches: 1usize];
-                let _: () = msg_send![ui_view, addGestureRecognizer: single_pan];
-
-                // Pinch gesture
-                let pinch: *mut Object =
-                    msg_send![class!(UIPinchGestureRecognizer), alloc];
-                let pinch: *mut Object =
-                    msg_send![pinch, initWithTarget: ui_view action: sel!(handlePinch:)];
-                let _: () = msg_send![pinch, setDelegate: gesture_delegate];
-                let _: () = msg_send![ui_view, addGestureRecognizer: pinch];
-
-                // Rotation gesture
-                let rotation: *mut Object =
-                    msg_send![class!(UIRotationGestureRecognizer), alloc];
-                let rotation: *mut Object =
-                    msg_send![rotation, initWithTarget: ui_view action: sel!(handleRotation:)];
-                let _: () = msg_send![rotation, setDelegate: gesture_delegate];
-                let _: () = msg_send![ui_view, addGestureRecognizer: rotation];
-
-                // iPadOS hover gesture (pointer/trackpad/Apple Pencil hover)
-                let hover: *mut Object =
-                    msg_send![class!(UIHoverGestureRecognizer), alloc];
-                let hover: *mut Object =
-                    msg_send![hover, initWithTarget: ui_view action: sel!(handleHover:)];
-                let _: () = msg_send![ui_view, addGestureRecognizer: hover];
-
-                // Long-press gesture for simulated right-click (context menu)
-                let long_press: *mut Object =
-                    msg_send![class!(UILongPressGestureRecognizer), alloc];
-                let long_press: *mut Object =
-                    msg_send![long_press, initWithTarget: ui_view action: sel!(handleLongPress:)];
-                let _: () = msg_send![long_press, setDelegate: gesture_delegate];
-                let _: () = msg_send![ui_view, addGestureRecognizer: long_press];
-
-                let _: () = msg_send![ui_view_controller, setView: ui_view];
-                let _: () = msg_send![ui_window, setRootViewController: ui_view_controller];
-                let _: () = msg_send![ui_window, makeKeyAndVisible];
-
-                let bounds = Bounds::new(
-                    crate::point(px(0.0), px(0.0)),
-                    size(
-                        px(screen_bounds.size.width as f32),
-                        px(screen_bounds.size.height as f32),
-                    ),
-                );
-                (
-                    ui_window,
-                    ui_view_controller,
-                    ui_view,
-                    keyboard_proxy,
-                    gesture_delegate,
-                    bounds,
-                    scale as f32,
-                )
+            // On iOS 13+, UIWindow must be associated with a UIWindowScene.
+            let app: *mut Object = msg_send![class!(UIApplication), sharedApplication];
+            let scenes: *mut Object = msg_send![app, connectedScenes];
+            let all_scenes: *mut Object = msg_send![scenes, allObjects];
+            let scene_count: usize = msg_send![all_scenes, count];
+            let ui_window: *mut Object = if scene_count > 0 {
+                let scene: *mut Object = msg_send![all_scenes, objectAtIndex: 0usize];
+                log::info!("creating UIWindow with UIWindowScene");
+                let w: *mut Object = msg_send![class!(UIWindow), alloc];
+                msg_send![w, initWithWindowScene: scene]
+            } else {
+                log::warn!("no UIWindowScene found, falling back to initWithFrame:");
+                let w: *mut Object = msg_send![class!(UIWindow), alloc];
+                msg_send![w, initWithFrame: screen_bounds]
             };
+
+            let ui_view_controller: *mut Object = msg_send![class!(UIViewController), new];
+
+            let ui_view: *mut Object = msg_send![GPUI_VIEW_CLASS, alloc];
+            let ui_view: *mut Object = msg_send![ui_view, initWithFrame: screen_bounds];
+
+            // Enable multi-touch for all gesture recognizers
+            let _: () = msg_send![ui_view, setMultipleTouchEnabled: YES];
+
+            // Hidden UITextField as keyboard proxy — shows software keyboard
+            // when it becomes first responder. GPUIView is its delegate.
+            let proxy_frame = CGRect {
+                origin: CGPoint { x: 0.0, y: -100.0 },
+                size: CGSize {
+                    width: 1.0,
+                    height: 1.0,
+                },
+            };
+            let keyboard_proxy: *mut Object = msg_send![class!(UITextField), alloc];
+            let keyboard_proxy: *mut Object = msg_send![keyboard_proxy, initWithFrame: proxy_frame];
+            let _: () = msg_send![keyboard_proxy, setAlpha: 0.01f64];
+            let _: () = msg_send![keyboard_proxy, setAutocorrectionType: 1isize]; // UITextAutocorrectionTypeNo
+            let _: () = msg_send![keyboard_proxy, setAutocapitalizationType: 0isize]; // UITextAutocapitalizationTypeNone
+            let _: () = msg_send![keyboard_proxy, setSpellCheckingType: 1isize]; // UITextSpellCheckingTypeNo
+            let _: () = msg_send![ui_view, addSubview: keyboard_proxy];
+            // GPUIView is the delegate — intercepts typed text via textField:shouldChangeCharactersInRange:
+            let _: () = msg_send![keyboard_proxy, setDelegate: ui_view];
+
+            // Create gesture delegate for simultaneous recognition
+            let gesture_delegate: *mut Object = msg_send![GPUI_GESTURE_DELEGATE_CLASS, new];
+
+            // Two-finger pan gesture for scroll
+            let pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let pan: *mut Object =
+                msg_send![pan, initWithTarget: ui_view action: sel!(handleScrollPan:)];
+            let _: () = msg_send![pan, setMinimumNumberOfTouches: 2usize];
+            let _: () = msg_send![pan, setMaximumNumberOfTouches: 2usize];
+            let _: () = msg_send![pan, setDelegate: gesture_delegate];
+            let _: () = msg_send![ui_view, addGestureRecognizer: pan];
+
+            // Single-finger pan gesture for scroll
+            let single_pan: *mut Object = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let single_pan: *mut Object = msg_send![single_pan,
+                    initWithTarget: ui_view action: sel!(handleSingleFingerPan:)];
+            let _: () = msg_send![single_pan, setMinimumNumberOfTouches: 1usize];
+            let _: () = msg_send![single_pan, setMaximumNumberOfTouches: 1usize];
+            let _: () = msg_send![ui_view, addGestureRecognizer: single_pan];
+
+            // Pinch gesture
+            let pinch: *mut Object = msg_send![class!(UIPinchGestureRecognizer), alloc];
+            let pinch: *mut Object =
+                msg_send![pinch, initWithTarget: ui_view action: sel!(handlePinch:)];
+            let _: () = msg_send![pinch, setDelegate: gesture_delegate];
+            let _: () = msg_send![ui_view, addGestureRecognizer: pinch];
+
+            // Rotation gesture
+            let rotation: *mut Object = msg_send![class!(UIRotationGestureRecognizer), alloc];
+            let rotation: *mut Object =
+                msg_send![rotation, initWithTarget: ui_view action: sel!(handleRotation:)];
+            let _: () = msg_send![rotation, setDelegate: gesture_delegate];
+            let _: () = msg_send![ui_view, addGestureRecognizer: rotation];
+
+            // iPadOS hover gesture (pointer/trackpad/Apple Pencil hover)
+            let hover: *mut Object = msg_send![class!(UIHoverGestureRecognizer), alloc];
+            let hover: *mut Object =
+                msg_send![hover, initWithTarget: ui_view action: sel!(handleHover:)];
+            let _: () = msg_send![ui_view, addGestureRecognizer: hover];
+
+            // Long-press gesture for simulated right-click (context menu)
+            let long_press: *mut Object = msg_send![class!(UILongPressGestureRecognizer), alloc];
+            let long_press: *mut Object =
+                msg_send![long_press, initWithTarget: ui_view action: sel!(handleLongPress:)];
+            let _: () = msg_send![long_press, setDelegate: gesture_delegate];
+            let _: () = msg_send![ui_view, addGestureRecognizer: long_press];
+
+            let _: () = msg_send![ui_view_controller, setView: ui_view];
+            let _: () = msg_send![ui_window, setRootViewController: ui_view_controller];
+            let _: () = msg_send![ui_window, makeKeyAndVisible];
+
+            let bounds = Bounds::new(
+                crate::point(px(0.0), px(0.0)),
+                size(
+                    px(screen_bounds.size.width as f32),
+                    px(screen_bounds.size.height as f32),
+                ),
+            );
+            (
+                ui_window,
+                ui_view_controller,
+                ui_view,
+                keyboard_proxy,
+                gesture_delegate,
+                bounds,
+                scale as f32,
+            )
+        };
 
         // Create the Metal renderer. The view's own layer is already a CAMetalLayer
         // (via the layerClass override), so we attach the renderer to it directly.
@@ -2565,13 +2613,15 @@ impl IosWindow {
 
             let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
 
-            let did_activate: *mut Object = msg_send![class!(NSString), stringWithUTF8String: UISCENE_DID_ACTIVATE.as_ptr()];
+            let did_activate: *mut Object =
+                msg_send![class!(NSString), stringWithUTF8String: UISCENE_DID_ACTIVATE.as_ptr()];
             let _: () = msg_send![center, addObserver: observer
                 selector: sel!(sceneDidActivate:)
                 name: did_activate
                 object: std::ptr::null::<Object>()];
 
-            let will_deactivate: *mut Object = msg_send![class!(NSString), stringWithUTF8String: UISCENE_WILL_DEACTIVATE.as_ptr()];
+            let will_deactivate: *mut Object =
+                msg_send![class!(NSString), stringWithUTF8String: UISCENE_WILL_DEACTIVATE.as_ptr()];
             let _: () = msg_send![center, addObserver: observer
                 selector: sel!(sceneWillDeactivate:)
                 name: will_deactivate
@@ -2602,8 +2652,7 @@ impl Drop for IosWindow {
 
             // Remove scene notification observer
             if !state.scene_observer.is_null() {
-                let center: *mut Object =
-                    msg_send![class!(NSNotificationCenter), defaultCenter];
+                let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
                 let _: () = msg_send![center, removeObserver: state.scene_observer];
 
                 // Release the Rc held by the observer's ivar
@@ -2675,7 +2724,8 @@ impl Drop for IosWindow {
 impl HasWindowHandle for IosWindow {
     fn window_handle(&self) -> std::result::Result<WindowHandle<'_>, HandleError> {
         let state = self.0.lock();
-        let ui_view = NonNull::new(state.ui_view.cast::<c_void>()).ok_or(HandleError::Unavailable)?;
+        let ui_view =
+            NonNull::new(state.ui_view.cast::<c_void>()).ok_or(HandleError::Unavailable)?;
         let mut handle = UiKitWindowHandle::new(ui_view);
         handle.ui_view_controller = NonNull::new(state.ui_view_controller.cast::<c_void>());
         unsafe { Ok(WindowHandle::borrow_raw(handle.into())) }
@@ -2740,16 +2790,14 @@ impl PlatformWindow for IosWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        log::debug!(
+            "[keyboard] set_input_handler called — registering handler (keyboard NOT shown)"
+        );
         let mut lock = self.0.lock();
-        let proxy = lock.keyboard_proxy;
         lock.input_handler = Some(input_handler);
-        drop(lock);
-        // Show keyboard by making the hidden UITextField first responder
-        if !proxy.is_null() {
-            unsafe {
-                let _: () = msg_send![proxy, becomeFirstResponder];
-            }
-        }
+        // Don't call becomeFirstResponder here — it would show the keyboard
+        // on every app launch. The keyboard is shown via the touch handler
+        // when the user actually taps a text input.
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
@@ -2758,6 +2806,9 @@ impl PlatformWindow for IosWindow {
         let proxy = lock.keyboard_proxy;
         drop(lock);
         if handler.is_some() && !proxy.is_null() {
+            log::debug!(
+                "[keyboard] take_input_handler — resigning first responder (hiding keyboard)"
+            );
             unsafe {
                 let _: () = msg_send![proxy, resignFirstResponder];
             }
@@ -2827,17 +2878,14 @@ impl PlatformWindow for IosWindow {
                     // Create UIVisualEffectView with system material blur
                     let effect: *mut Object = msg_send![class!(UIBlurEffect),
                         effectWithStyle: 6isize]; // UIBlurEffectStyleSystemMaterial
-                    let blur_view: *mut Object =
-                        msg_send![class!(UIVisualEffectView), alloc];
-                    let blur_view: *mut Object =
-                        msg_send![blur_view, initWithEffect: effect];
+                    let blur_view: *mut Object = msg_send![class!(UIVisualEffectView), alloc];
+                    let blur_view: *mut Object = msg_send![blur_view, initWithEffect: effect];
 
                     let bounds: CGRect = msg_send![lock.ui_view, bounds];
                     let _: () = msg_send![blur_view, setFrame: bounds];
                     // Auto-resize with parent
                     let autoresizing: usize = 0x3F; // FlexibleWidth | FlexibleHeight | all margins
-                    let _: () =
-                        msg_send![blur_view, setAutoresizingMask: autoresizing];
+                    let _: () = msg_send![blur_view, setAutoresizingMask: autoresizing];
 
                     // Insert behind the Metal content
                     let _: () = msg_send![lock.ui_view, insertSubview: blur_view atIndex: 0isize];
@@ -2952,7 +3000,8 @@ impl PlatformWindow for IosWindow {
             ];
 
             let run_loop: *mut Object = msg_send![class!(NSRunLoop), mainRunLoop];
-            let _: () = msg_send![display_link, addToRunLoop: run_loop forMode: NSRunLoopCommonModes];
+            let _: () =
+                msg_send![display_link, addToRunLoop: run_loop forMode: NSRunLoopCommonModes];
 
             let mut state = self.0.lock();
             state.display_link = display_link;

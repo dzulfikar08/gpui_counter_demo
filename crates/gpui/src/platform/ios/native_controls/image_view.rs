@@ -31,18 +31,10 @@ pub(crate) unsafe fn set_native_image_view_sf_symbol_config(
     weight: i64,
 ) {
     unsafe {
-        // Map weight to UIImage.SymbolWeight
-        let ui_weight: f64 = match weight {
-            1 => -0.80, // ultraLight
-            2 => -0.60, // thin
-            3 => -0.40, // light
-            4 => 0.0,   // regular
-            5 => 0.23,  // medium
-            6 => 0.30,  // semibold
-            7 => 0.40,  // bold
-            8 => 0.56,  // heavy
-            9 => 0.62,  // black
-            _ => 0.0,   // regular
+        // UIImageSymbolWeight is an NSInteger enum.
+        let ui_weight: i64 = match weight {
+            1..=9 => weight,
+            _ => 4, // UIImageSymbolWeightRegular
         };
 
         let config: id = msg_send![class!(UIImageSymbolConfiguration),

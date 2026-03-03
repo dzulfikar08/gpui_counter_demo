@@ -38,6 +38,32 @@ extern "C" fn button_action(this: &Object, _sel: Sel, _sender: id) {
     }
 }
 
+unsafe fn install_button_configuration(button: id, configuration: id) {
+    if configuration == nil {
+        return;
+    }
+
+    // Preserve any title/image already set through legacy UIButton setters.
+    let title: id = msg_send![button, titleForState: 0u64];
+    if title != nil {
+        let _: () = msg_send![configuration, setTitle: title];
+    }
+    let image: id = msg_send![button, imageForState: 0u64];
+    if image != nil {
+        let _: () = msg_send![configuration, setImage: image];
+    }
+
+    let _: () = msg_send![button, setConfiguration: configuration];
+}
+
+unsafe fn get_button_configuration(button: id) -> id {
+    if msg_send![button, respondsToSelector: sel!(configuration)] {
+        msg_send![button, configuration]
+    } else {
+        nil
+    }
+}
+
 // =============================================================================
 // UIButton — creation & lifecycle
 // =============================================================================
@@ -56,7 +82,14 @@ pub(crate) unsafe fn create_native_button(title: &str) -> id {
 /// Updates the button's title.
 pub(crate) unsafe fn set_native_button_title(button: id, title: &str) {
     unsafe {
-        let _: () = msg_send![button, setTitle: ns_string(title) forState: 0u64];
+        let title = ns_string(title);
+        let _: () = msg_send![button, setTitle: title forState: 0u64];
+
+        let configuration = get_button_configuration(button);
+        if configuration != nil {
+            let _: () = msg_send![configuration, setTitle: title];
+            let _: () = msg_send![button, setConfiguration: configuration];
+        }
     }
 }
 
@@ -106,61 +139,63 @@ pub(crate) unsafe fn release_native_button(button: id) {
 // UIButton — styling
 // =============================================================================
 
-/// Sets the button's bezel style. On iOS this maps to UIButton.configuration styles.
-/// 1 = Rounded (plain), 12 = Filled, 15 = Inline (tinted).
+/// Sets the button's bezel style. On iOS this maps to UIButtonConfiguration.
+/// 0 = Borderless/plain, 1 = Rounded/bordered, 12 = Filled, 15 = Inline.
 pub(crate) unsafe fn set_native_button_bezel_style(button: id, bezel_style: i64) {
     unsafe {
-        match bezel_style {
-            12 => {
-                // Filled style — use background color
-                let color: id = msg_send![class!(UIColor), systemBlueColor];
-                let _: () = msg_send![button, setBackgroundColor: color];
-                let white: id = msg_send![class!(UIColor), whiteColor];
-                let _: () = msg_send![button, setTintColor: white];
-                // Rounded corners
-                let layer: id = msg_send![button, layer];
-                let _: () = msg_send![layer, setCornerRadius: 8.0f64];
-                let _: () = msg_send![layer, setMasksToBounds: true as i8];
-            }
-            15 => {
-                // Inline/tinted style
-                let color: id = msg_send![class!(UIColor), systemGray5Color];
-                let _: () = msg_send![button, setBackgroundColor: color];
-                let layer: id = msg_send![button, layer];
-                let _: () = msg_send![layer, setCornerRadius: 6.0f64];
-                let _: () = msg_send![layer, setMasksToBounds: true as i8];
-            }
-            _ => {
-                // Default/rounded — standard UIButton.system appearance
-                let _: () = msg_send![button, setBackgroundColor: nil];
-            }
+        if msg_send![button, respondsToSelector: sel!(setConfiguration:)] {
+            let configuration_class = class!(UIButtonConfiguration);
+            let configuration: id = match bezel_style {
+                0 => msg_send![configuration_class, plainButtonConfiguration],
+                12 => msg_send![configuration_class, borderedProminentButtonConfiguration],
+                15 => msg_send![configuration_class, borderlessButtonConfiguration],
+                _ => msg_send![configuration_class, borderedButtonConfiguration],
+            };
+            install_button_configuration(button, configuration);
+            return;
         }
+
+        // Older iOS fallback: keep system button look.
+        let _: () = msg_send![button, setBackgroundColor: nil];
+        let layer: id = msg_send![button, layer];
+        let _: () = msg_send![layer, setBorderWidth: 0.0f64];
+        let _: () = msg_send![layer, setCornerRadius: 0.0f64];
     }
 }
 
 /// Sets whether the button draws a border.
 pub(crate) unsafe fn set_native_button_bordered(button: id, bordered: bool) {
     unsafe {
-        if bordered {
-            let layer: id = msg_send![button, layer];
-            let _: () = msg_send![layer, setBorderWidth: 1.0f64];
-            let color: id = msg_send![class!(UIColor), separatorColor];
-            let cg_color: *mut c_void = msg_send![color, CGColor];
-            let _: () = msg_send![layer, setBorderColor: cg_color];
-        } else {
-            let layer: id = msg_send![button, layer];
-            let _: () = msg_send![layer, setBorderWidth: 0.0f64];
+        if msg_send![button, respondsToSelector: sel!(setConfiguration:)] {
+            if bordered {
+                return;
+            }
+            let configuration: id =
+                msg_send![class!(UIButtonConfiguration), plainButtonConfiguration];
+            install_button_configuration(button, configuration);
+            return;
         }
+
+        if bordered {
+            return;
+        }
+        let layer: id = msg_send![button, layer];
+        let _: () = msg_send![layer, setBorderWidth: 0.0f64];
     }
 }
 
 /// Sets the bezel/background color of the button.
 pub(crate) unsafe fn set_native_button_bezel_color(button: id, r: f64, g: f64, b: f64, a: f64) {
     unsafe {
-        let color: id = msg_send![class!(UIColor),
-            colorWithRed: r green: g blue: b alpha: a
-        ];
-        let _: () = msg_send![button, setBackgroundColor: color];
+        let color: id = msg_send![class!(UIColor), colorWithRed: r green: g blue: b alpha: a];
+
+        let configuration = get_button_configuration(button);
+        if configuration != nil {
+            let _: () = msg_send![configuration, setBaseBackgroundColor: color];
+            let _: () = msg_send![button, setConfiguration: configuration];
+        } else {
+            let _: () = msg_send![button, setBackgroundColor: color];
+        }
     }
 }
 
@@ -170,8 +205,15 @@ pub(crate) unsafe fn set_native_button_shows_border_on_hover(_button: id, _shows
 /// Sets the button background to the system tint color.
 pub(crate) unsafe fn set_native_button_bezel_color_accent(button: id) {
     unsafe {
-        let color: id = msg_send![class!(UIColor), tintColor];
-        let _: () = msg_send![button, setBackgroundColor: color];
+        let color: id = msg_send![class!(UIColor), systemBlueColor];
+
+        let configuration = get_button_configuration(button);
+        if configuration != nil {
+            let _: () = msg_send![configuration, setBaseBackgroundColor: color];
+            let _: () = msg_send![button, setConfiguration: configuration];
+        } else {
+            let _: () = msg_send![button, setBackgroundColor: color];
+        }
     }
 }
 
@@ -184,10 +226,15 @@ pub(crate) unsafe fn set_native_button_content_tint_color(
     a: f64,
 ) {
     unsafe {
-        let color: id = msg_send![class!(UIColor),
-            colorWithRed: r green: g blue: b alpha: a
-        ];
-        let _: () = msg_send![button, setTintColor: color];
+        let color: id = msg_send![class!(UIColor), colorWithRed: r green: g blue: b alpha: a];
+
+        let configuration = get_button_configuration(button);
+        if configuration != nil {
+            let _: () = msg_send![configuration, setBaseForegroundColor: color];
+            let _: () = msg_send![button, setConfiguration: configuration];
+        } else {
+            let _: () = msg_send![button, setTintColor: color];
+        }
     }
 }
 
@@ -199,11 +246,23 @@ pub(crate) unsafe fn set_native_button_content_tint_color(
 pub(crate) unsafe fn set_native_button_sf_symbol(button: id, symbol_name: &str, image_only: bool) {
     unsafe {
         let image: id = msg_send![class!(UIImage), systemImageNamed: ns_string(symbol_name)];
-        if image != nil {
-            let _: () = msg_send![button, setImage: image forState: 0u64];
+        if image == nil {
+            return;
+        }
+
+        let _: () = msg_send![button, setImage: image forState: 0u64];
+
+        let configuration = get_button_configuration(button);
+        if configuration != nil {
+            let _: () = msg_send![configuration, setImage: image];
             if image_only {
-                let _: () = msg_send![button, setTitle: ns_string("") forState: 0u64];
+                let empty = ns_string("");
+                let _: () = msg_send![button, setTitle: empty forState: 0u64];
+                let _: () = msg_send![configuration, setTitle: empty];
             }
+            let _: () = msg_send![button, setConfiguration: configuration];
+        } else if image_only {
+            let _: () = msg_send![button, setTitle: ns_string("") forState: 0u64];
         }
     }
 }

@@ -1,4 +1,6 @@
-use super::{id, ns_string, CALLBACK_IVAR, UI_CONTROL_EVENT_TOUCH_UP_INSIDE};
+use super::{
+    id, ns_string, CALLBACK_IVAR, UI_CONTROL_EVENT_TOUCH_UP_INSIDE, UI_CONTROL_EVENT_VALUE_CHANGED,
+};
 use ctor::ctor;
 use objc::{
     class,
@@ -28,27 +30,67 @@ extern "C" fn checkbox_action(this: &Object, _sel: Sel, sender: id) {
     unsafe {
         let ptr: *mut c_void = *this.get_ivar(CALLBACK_IVAR);
         if !ptr.is_null() {
-            // Toggle: read current selected state
-            let selected: bool = msg_send![sender, isSelected];
             let callback = &*(ptr as *const Box<dyn Fn(bool)>);
-            callback(!selected);
+            if msg_send![sender, respondsToSelector: sel!(isOn)] {
+                let is_on: bool = msg_send![sender, isOn];
+                callback(is_on);
+            } else {
+                // UIButton fallback doesn't toggle selected automatically.
+                let was_selected: bool = msg_send![sender, isSelected];
+                let checked = !was_selected;
+                let _: () = msg_send![sender, setSelected: checked as i8];
+                set_fallback_checkbox_image(sender, checked);
+                callback(checked);
+            }
         }
     }
 }
 
-/// Creates a native checkbox using UIButton with SF Symbol checkmark.
-/// iOS has no built-in checkbox — we use a UIButton that toggles between
-/// "square" and "checkmark.square.fill" SF Symbols.
+unsafe fn set_fallback_checkbox_image(checkbox: id, checked: bool) {
+    unsafe {
+        let symbol = if checked {
+            "checkmark.square.fill"
+        } else {
+            "square"
+        };
+        let image: id = msg_send![class!(UIImage), systemImageNamed: ns_string(symbol)];
+        if !image.is_null() {
+            let _: () = msg_send![checkbox, setImage: image forState: 0u64];
+        }
+    }
+}
+
+/// Creates a native checkbox control.
+///
+/// Uses checkbox-style `UISwitch` for Mac idiom (Catalyst).
+/// Falls back to a UIButton-based checkbox on iPhone/iPad, since UIKit doesn't
+/// provide a standalone checkbox control there.
 pub(crate) unsafe fn create_native_checkbox(title: &str) -> id {
     unsafe {
-        let button: id = msg_send![class!(UIButton), buttonWithType: 1i64]; // UIButtonTypeSystem
+        let checkbox: id = msg_send![class!(UISwitch), alloc];
+        let checkbox: id = msg_send![checkbox, init];
+
+        let device: id = msg_send![class!(UIDevice), currentDevice];
+        let idiom: i64 = msg_send![device, userInterfaceIdiom];
+        let is_mac_idiom = idiom == 5; // UIUserInterfaceIdiomMac
+
+        if is_mac_idiom && msg_send![checkbox, respondsToSelector: sel!(setPreferredStyle:)] {
+            // UISwitchStyleCheckbox = 1 (Catalyst Mac idiom only)
+            let _: () = msg_send![checkbox, setPreferredStyle: 1i64];
+            if msg_send![checkbox, respondsToSelector: sel!(setTitle:)] {
+                let _: () = msg_send![checkbox, setTitle: ns_string(title)];
+            }
+            let _: () = msg_send![checkbox, setAccessibilityLabel: ns_string(title)];
+            return checkbox;
+        }
+
+        let _: () = msg_send![checkbox, release];
+
+        let button: id = msg_send![class!(UIButton), buttonWithType: 1i64];
         let _: () = msg_send![button, retain];
         let _: () = msg_send![button, setTitle: ns_string(title) forState: 0u64];
-
-        // Set unchecked image
-        let unchecked: id = msg_send![class!(UIImage), systemImageNamed: ns_string("square")];
-        let _: () = msg_send![button, setImage: unchecked forState: 0u64];
-
+        set_fallback_checkbox_image(button, false);
+        let _: () = msg_send![button, setAccessibilityLabel: ns_string(title)];
         button
     }
 }
@@ -56,21 +98,24 @@ pub(crate) unsafe fn create_native_checkbox(title: &str) -> id {
 /// Sets the checkbox title.
 pub(crate) unsafe fn set_native_checkbox_title(checkbox: id, title: &str) {
     unsafe {
-        let _: () = msg_send![checkbox, setTitle: ns_string(title) forState: 0u64];
+        if msg_send![checkbox, respondsToSelector: sel!(setTitle:forState:)] {
+            let _: () = msg_send![checkbox, setTitle: ns_string(title) forState: 0u64];
+        } else if msg_send![checkbox, respondsToSelector: sel!(setTitle:)] {
+            let _: () = msg_send![checkbox, setTitle: ns_string(title)];
+        }
+        let _: () = msg_send![checkbox, setAccessibilityLabel: ns_string(title)];
     }
 }
 
-/// Sets the checked state (updates the SF Symbol icon).
+/// Sets the checked state.
 pub(crate) unsafe fn set_native_checkbox_state(checkbox: id, checked: bool) {
     unsafe {
-        let _: () = msg_send![checkbox, setSelected: checked as i8];
-        let symbol = if checked {
-            "checkmark.square.fill"
+        if msg_send![checkbox, respondsToSelector: sel!(setOn:animated:)] {
+            let _: () = msg_send![checkbox, setOn: checked as i8 animated: false as i8];
         } else {
-            "square"
-        };
-        let image: id = msg_send![class!(UIImage), systemImageNamed: ns_string(symbol)];
-        let _: () = msg_send![checkbox, setImage: image forState: 0u64];
+            let _: () = msg_send![checkbox, setSelected: checked as i8];
+            set_fallback_checkbox_image(checkbox, checked);
+        }
     }
 }
 
@@ -86,10 +131,16 @@ pub(crate) unsafe fn set_native_checkbox_action(
         let callback_ptr = Box::into_raw(Box::new(callback)) as *mut c_void;
         (*target).set_ivar::<*mut c_void>(CALLBACK_IVAR, callback_ptr);
 
+        let control_events = if msg_send![checkbox, respondsToSelector: sel!(isOn)] {
+            UI_CONTROL_EVENT_VALUE_CHANGED
+        } else {
+            UI_CONTROL_EVENT_TOUCH_UP_INSIDE
+        };
+
         let _: () = msg_send![checkbox,
             addTarget: target
             action: sel!(checkboxAction:)
-            forControlEvents: UI_CONTROL_EVENT_TOUCH_UP_INSIDE
+            forControlEvents: control_events
         ];
 
         target as *mut c_void
@@ -110,7 +161,7 @@ pub(crate) unsafe fn release_native_checkbox_target(target: *mut c_void) {
     }
 }
 
-/// Releases the checkbox (UIButton).
+/// Releases the checkbox.
 pub(crate) unsafe fn release_native_checkbox(checkbox: id) {
     unsafe {
         if !checkbox.is_null() {

@@ -734,12 +734,8 @@ impl Element for NativeSidebar {
                             state.current_collapsed = collapsed;
                         }
 
-                        // Update the surface's root view on subsequent paints
-                        if let Some(view) = sidebar_view {
-                            if let Some(surface_id) = state.surface_id {
-                                window.update_surface_root_view(surface_id, view);
-                            }
-                        }
+                        // Surfaces are macOS-only; iOS sidebar is a plain container
+                        let _ = sidebar_view;
 
                         state
                     } else {
@@ -762,19 +758,9 @@ impl Element for NativeSidebar {
                             control as *mut c_void
                         };
 
-                        // Register a surface for the sidebar view if provided
-                        let surface_id = if let Some(view) = sidebar_view {
-                            let handle = window.register_surface(view);
-                            unsafe {
-                                native_controls::embed_surface_view_in_sidebar(
-                                    control_ptr as native_controls::id,
-                                    handle.native_view_ptr as native_controls::id,
-                                );
-                            }
-                            Some(handle.id)
-                        } else {
-                            None
-                        };
+                        // Surfaces are macOS-only; on iOS skip surface embedding
+                        let surface_id: Option<SurfaceId> = None;
+                        let _ = sidebar_view;
 
                         // Apply initial background color if provided
                         if let Some((r, g, b, a)) = sidebar_background_color {

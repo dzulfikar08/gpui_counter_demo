@@ -9,11 +9,59 @@ extern void gpui_ios_run_demo(const char *name);
 
 - (BOOL)application:(UIApplication *)app
     didFinishLaunchingWithOptions:(NSDictionary *)opts {
-    // Demo name is passed as a process argument by ios/run.
-    // Falls back to "hello_world" when launched manually from Xcode.
-    NSArray *args = [[NSProcessInfo processInfo] arguments];
-    const char *demo = (args.count > 1) ? [args[1] UTF8String] : "hello_world";
-    gpui_ios_run_demo(demo);
+    NSProcessInfo *processInfo = [NSProcessInfo processInfo];
+    NSArray<NSString *> *args = [processInfo arguments];
+    NSDictionary<NSString *, NSString *> *env = [processInfo environment];
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *const kLastDemoKey = @"GPUI_IOS_LAST_DEMO";
+
+    // Primary launch channel from ios/run: explicit environment variable.
+    NSString *demo = env[@"GPUI_IOS_DEMO"];
+
+    // Fallback: look for a known demo name in process args (passed by launchers).
+    if (demo.length == 0) {
+        NSSet<NSString *> *knownDemos = [NSSet setWithArray:@[
+            @"hello_world",
+            @"touch",
+            @"text",
+            @"lifecycle",
+            @"combined",
+            @"scroll",
+            @"text_input",
+            @"vertical_scroll",
+            @"horizontal_scroll",
+            @"pinch",
+            @"rotation",
+            @"controls",
+            @"native_controls",
+        ]];
+
+        for (NSInteger i = args.count - 1; i >= 1; i--) {
+            NSString *candidate = args[i];
+            if ([knownDemos containsObject:candidate]) {
+                demo = candidate;
+                break;
+            }
+        }
+    }
+
+    // If this launch had no explicit demo (for example, icon reopen),
+    // continue with the most recently selected demo.
+    if (demo.length == 0) {
+        NSString *savedDemo = [defaults stringForKey:kLastDemoKey];
+        if (savedDemo.length > 0) {
+            demo = savedDemo;
+        }
+    }
+
+    if (demo.length == 0) {
+        demo = @"hello_world";
+    }
+
+    [defaults setObject:demo forKey:kLastDemoKey];
+
+    NSLog(@"[GPUI-iOS] launch args=%@ selected_demo=%@", args, demo);
+    gpui_ios_run_demo([demo UTF8String]);
     return YES;
 }
 

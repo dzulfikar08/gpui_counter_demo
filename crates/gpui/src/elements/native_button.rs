@@ -3,9 +3,9 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use crate::{
-    AbsoluteLength, App, Bounds, ClickEvent, DefiniteLength, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Length, Pixels, SharedString, Style,
-    StyleRefinement, Styled, Window, px,
+    px, AbsoluteLength, App, Bounds, ClickEvent, DefiniteLength, Element, ElementId,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, Length, Pixels, SharedString,
+    Style, StyleRefinement, Styled, Window,
 };
 
 use super::native_element_helpers::schedule_native_callback_no_args;
@@ -235,7 +235,7 @@ fn apply_button_style(button: crate::platform::native_controls::id, style: Nativ
                 native_controls::set_native_button_shows_border_on_hover(button, false);
             }
             NativeButtonStyle::Borderless => {
-                native_controls::set_native_button_bezel_style(button, 1);
+                native_controls::set_native_button_bezel_style(button, 0);
                 native_controls::set_native_button_bordered(button, false);
                 native_controls::set_native_button_shows_border_on_hover(button, false);
             }
@@ -493,10 +493,7 @@ impl Element for NativeButton {
                                 state.current_label = label;
                             }
                             if state.current_style != button_style {
-                                apply_button_style(
-                                    state.native_button_ptr as Id,
-                                    button_style,
-                                );
+                                apply_button_style(state.native_button_ptr as Id, button_style);
                                 state.current_style = button_style;
                             }
                             if state.current_tint != tint {

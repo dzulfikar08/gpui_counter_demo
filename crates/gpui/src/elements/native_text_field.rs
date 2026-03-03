@@ -622,12 +622,12 @@ fn build_text_field_callbacks_ios(
 
     let submit_cb = on_submit.map(|h| {
         schedule_native_focus_callback(
-            Rc::new(move |window: &mut Window, cx: &mut App| {
+            Rc::new(Box::new(move |window: &mut Window, cx: &mut App| {
                 let event = TextSubmitEvent {
                     text: String::new(),
                 };
                 h(&event, window, cx);
-            }),
+            }) as Box<dyn Fn(&mut Window, &mut App)>),
             next_frame_callbacks.clone(),
             invalidator.clone(),
         )
@@ -643,12 +643,12 @@ fn build_text_field_callbacks_ios(
 
     let end_cb = on_blur.map(|h| {
         schedule_native_focus_callback(
-            Rc::new(move |window: &mut Window, cx: &mut App| {
+            Rc::new(Box::new(move |window: &mut Window, cx: &mut App| {
                 let event = TextSubmitEvent {
                     text: String::new(),
                 };
                 h(&event, window, cx);
-            }),
+            }) as Box<dyn Fn(&mut Window, &mut App)>),
             next_frame_callbacks.clone(),
             invalidator.clone(),
         )

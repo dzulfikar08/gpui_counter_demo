@@ -4500,6 +4500,14 @@ impl Window {
     #[cfg(target_os = "macos")]
     pub fn update_surface_root_view(&mut self, id: SurfaceId, view: AnyView) {
         if let Some(surface) = self.surfaces.get_mut(&id) {
+            let old_entity = surface.root_view.entity_id();
+            let new_entity = view.entity_id();
+            if old_entity != new_entity {
+                log::info!(
+                    "update_surface_root_view: surface {:?} root_view {:?} -> {:?}",
+                    id, old_entity, new_entity,
+                );
+            }
             surface.root_view = view;
             surface.dirty = true;
         }

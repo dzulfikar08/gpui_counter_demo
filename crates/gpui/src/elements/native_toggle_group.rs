@@ -178,6 +178,10 @@ struct NativeToggleGroupState {
 
 impl Drop for NativeToggleGroupState {
     fn drop(&mut self) {
+        log::info!(
+            "NativeToggleGroupState::drop: control_ptr={:?}, attached={}",
+            self.control_ptr, self.attached,
+        );
         if self.attached {
             #[cfg(target_os = "macos")]
             unsafe {
@@ -369,6 +373,10 @@ impl Element for NativeToggleGroup {
 
                         state
                     } else {
+                        log::info!(
+                            "NativeToggleGroup: CREATING new control, id={:?}, parent_view={:?}",
+                            id, native_view,
+                        );
                         // Creation path
                         let (control_ptr, target_ptr) = unsafe {
                             let label_strs: Vec<&str> = labels.iter().map(|s| s.as_ref()).collect();

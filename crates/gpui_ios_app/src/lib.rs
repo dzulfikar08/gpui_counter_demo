@@ -1,8 +1,8 @@
 use gpui::{
-    App, Application, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton, PinchEvent,
-    RotationEvent, Window, WindowAppearance, WindowOptions, div, native_button, native_checkbox,
-    native_image_view, native_progress_bar, native_slider, native_stepper, native_switch,
-    native_text_field, native_toggle_group, prelude::*, px, rgb, NativeImageSymbolWeight,
+    div, native_button, native_checkbox, native_image_view, native_progress_bar, native_slider,
+    native_stepper, native_switch, native_text_field, native_toggle_group, prelude::*, px, rgb,
+    App, Application, Context, FocusHandle, Focusable, KeyDownEvent, MouseButton,
+    NativeImageSymbolWeight, PinchEvent, RotationEvent, Window, WindowAppearance, WindowOptions,
 };
 use log::LevelFilter;
 use std::io::Write;
@@ -232,7 +232,7 @@ fn run_ios_app<V: Render + 'static>(
         let _ = std::fs::write(&path, format!("{}", info));
     }));
 
-    log::info!("[GPUI-iOS] launching app");
+    log::info!("[GPUI-iOS] launching app ({subsystem})");
 
     let app = Application::new();
     let keepalive = app.clone();
@@ -263,9 +263,27 @@ impl Render for IosHelloWorld {
             .justify_center()
             .gap(px(20.0))
             .bg(rgb(0x1e1e2e))
-            .child(div().w(px(200.0)).h(px(80.0)).bg(rgb(0xf38ba8)).rounded(px(12.0)))
-            .child(div().w(px(200.0)).h(px(80.0)).bg(rgb(0xa6e3a1)).rounded(px(12.0)))
-            .child(div().w(px(200.0)).h(px(80.0)).bg(rgb(0x89b4fa)).rounded(px(12.0)))
+            .child(
+                div()
+                    .w(px(200.0))
+                    .h(px(80.0))
+                    .bg(rgb(0xf38ba8))
+                    .rounded(px(12.0)),
+            )
+            .child(
+                div()
+                    .w(px(200.0))
+                    .h(px(80.0))
+                    .bg(rgb(0xa6e3a1))
+                    .rounded(px(12.0)),
+            )
+            .child(
+                div()
+                    .w(px(200.0))
+                    .h(px(80.0))
+                    .bg(rgb(0x89b4fa))
+                    .rounded(px(12.0)),
+            )
     }
 }
 
@@ -289,7 +307,11 @@ impl Render for IosTouchDemo {
         let tap_count = self.tap_count;
 
         let box_color = |index: usize, base: u32, active: u32| -> u32 {
-            if tapped == Some(index) { active } else { base }
+            if tapped == Some(index) {
+                active
+            } else {
+                base
+            }
         };
 
         div()
@@ -322,12 +344,15 @@ impl Render for IosTouchDemo {
                     .items_center()
                     .justify_center()
                     .child("Red")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        log::info!("touch: red box tapped");
-                        this.tapped_box = Some(0);
-                        this.tap_count += 1;
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            log::info!("touch: red box tapped");
+                            this.tapped_box = Some(0);
+                            this.tap_count += 1;
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -340,12 +365,15 @@ impl Render for IosTouchDemo {
                     .items_center()
                     .justify_center()
                     .child("Green")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        log::info!("touch: green box tapped");
-                        this.tapped_box = Some(1);
-                        this.tap_count += 1;
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            log::info!("touch: green box tapped");
+                            this.tapped_box = Some(1);
+                            this.tap_count += 1;
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -358,12 +386,15 @@ impl Render for IosTouchDemo {
                     .items_center()
                     .justify_center()
                     .child("Blue")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        log::info!("touch: blue box tapped");
-                        this.tapped_box = Some(2);
-                        this.tap_count += 1;
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            log::info!("touch: blue box tapped");
+                            this.tapped_box = Some(2);
+                            this.tap_count += 1;
+                            cx.notify();
+                        }),
+                    ),
             )
     }
 }
@@ -393,16 +424,8 @@ impl Render for IosTextDemo {
             .gap(px(16.0))
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
-            .child(
-                div()
-                    .text_size(px(32.0))
-                    .child("Hello iOS!"),
-            )
-            .child(
-                div()
-                    .text_size(px(20.0))
-                    .child("CoreText text rendering"),
-            )
+            .child(div().text_size(px(32.0)).child("Hello iOS!"))
+            .child(div().text_size(px(20.0)).child("CoreText text rendering"))
             .child(
                 div()
                     .text_size(px(16.0))
@@ -466,11 +489,7 @@ impl Render for IosLifecycleDemo {
             .gap(px(16.0))
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
-            .child(
-                div()
-                    .text_size(px(24.0))
-                    .child("Window Lifecycle"),
-            )
+            .child(div().text_size(px(24.0)).child("Window Lifecycle"))
             .child(
                 div()
                     .w(px(300.0))
@@ -529,11 +548,30 @@ impl Render for IosCombinedDemo {
         let tap_count = self.tap_count;
         let last_tapped = self.last_tapped.unwrap_or("none");
 
-        let is_dark = matches!(appearance, WindowAppearance::Dark | WindowAppearance::VibrantDark);
-        let bg_color = if is_dark { rgb(0x1e1e2e) } else { rgb(0xeff1f5) };
-        let text_color = if is_dark { rgb(0xcdd6f4) } else { rgb(0x4c4f69) };
-        let panel_bg = if is_dark { rgb(0x313244) } else { rgb(0xccd0da) };
-        let muted_text = if is_dark { rgb(0x6c7086) } else { rgb(0x9ca0b0) };
+        let is_dark = matches!(
+            appearance,
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        );
+        let bg_color = if is_dark {
+            rgb(0x1e1e2e)
+        } else {
+            rgb(0xeff1f5)
+        };
+        let text_color = if is_dark {
+            rgb(0xcdd6f4)
+        } else {
+            rgb(0x4c4f69)
+        };
+        let panel_bg = if is_dark {
+            rgb(0x313244)
+        } else {
+            rgb(0xccd0da)
+        };
+        let muted_text = if is_dark {
+            rgb(0x6c7086)
+        } else {
+            rgb(0x9ca0b0)
+        };
 
         div()
             .size_full()
@@ -545,11 +583,7 @@ impl Render for IosCombinedDemo {
             .bg(bg_color)
             .text_color(text_color)
             // Title
-            .child(
-                div()
-                    .text_size(px(28.0))
-                    .child("GPUI on iOS"),
-            )
+            .child(div().text_size(px(28.0)).child("GPUI on iOS"))
             // Info panel
             .child(
                 div()
@@ -560,17 +594,13 @@ impl Render for IosCombinedDemo {
                     .flex()
                     .flex_col()
                     .gap(px(4.0))
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .child(format!(
-                                "{:.0}x{:.0} @{:.0}x  {:?}",
-                                f32::from(bounds.size.width),
-                                f32::from(bounds.size.height),
-                                scale,
-                                appearance,
-                            )),
-                    )
+                    .child(div().text_size(px(14.0)).child(format!(
+                        "{:.0}x{:.0} @{:.0}x  {:?}",
+                        f32::from(bounds.size.width),
+                        f32::from(bounds.size.height),
+                        scale,
+                        appearance,
+                    )))
                     .child(
                         div()
                             .text_size(px(14.0))
@@ -589,11 +619,14 @@ impl Render for IosCombinedDemo {
                     .items_center()
                     .justify_center()
                     .child("Tap me")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.tap_count += 1;
-                        this.last_tapped = Some("red");
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.tap_count += 1;
+                            this.last_tapped = Some("red");
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -607,11 +640,14 @@ impl Render for IosCombinedDemo {
                     .justify_center()
                     .text_color(rgb(0x1e1e2e))
                     .child("Tap me")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.tap_count += 1;
-                        this.last_tapped = Some("green");
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.tap_count += 1;
+                            this.last_tapped = Some("green");
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -625,11 +661,14 @@ impl Render for IosCombinedDemo {
                     .justify_center()
                     .text_color(rgb(0x1e1e2e))
                     .child("Tap me")
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.tap_count += 1;
-                        this.last_tapped = Some("blue");
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.tap_count += 1;
+                            this.last_tapped = Some("blue");
+                            cx.notify();
+                        }),
+                    ),
             )
             // Text samples
             .child(
@@ -658,15 +697,19 @@ struct IosScrollDemo;
 impl Render for IosScrollDemo {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let colors = [
-            0xf38ba8u32, 0xa6e3a1, 0x89b4fa, 0xfab387, 0xcba6f7,
-            0xf9e2af, 0x94e2d5, 0xf2cdcd, 0x89dceb, 0xb4befe,
+            0xf38ba8u32,
+            0xa6e3a1,
+            0x89b4fa,
+            0xfab387,
+            0xcba6f7,
+            0xf9e2af,
+            0x94e2d5,
+            0xf2cdcd,
+            0x89dceb,
+            0xb4befe,
         ];
 
-        let mut scroll_content = div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .p(px(16.0));
+        let mut scroll_content = div().flex().flex_col().gap(px(8.0)).p(px(16.0));
 
         for i in 0..50 {
             let color = colors[i % colors.len()];
@@ -771,11 +814,7 @@ impl Render for IosTextInputDemo {
                     cx.notify();
                 }
             }))
-            .child(
-                div()
-                    .text_size(px(24.0))
-                    .child("Text Input Demo"),
-            )
+            .child(div().text_size(px(24.0)).child("Text Input Demo"))
             .child(
                 div()
                     .id("text-field")
@@ -798,10 +837,13 @@ impl Render for IosTextInputDemo {
                             })
                             .child(display_text),
                     )
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_this, _, window, cx| {
-                        cx.focus_self(window);
-                        cx.notify();
-                    })),
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, _, window, cx| {
+                            cx.focus_self(window);
+                            cx.notify();
+                        }),
+                    ),
             )
             .child(
                 div()
@@ -832,8 +874,16 @@ struct IosVerticalScrollDemo;
 impl Render for IosVerticalScrollDemo {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let colors = [
-            0xf38ba8u32, 0xa6e3a1, 0x89b4fa, 0xfab387, 0xcba6f7,
-            0xf9e2af, 0x94e2d5, 0xf2cdcd, 0x89dceb, 0xb4befe,
+            0xf38ba8u32,
+            0xa6e3a1,
+            0x89b4fa,
+            0xfab387,
+            0xcba6f7,
+            0xf9e2af,
+            0x94e2d5,
+            0xf2cdcd,
+            0x89dceb,
+            0xb4befe,
         ];
 
         let mut list = div().flex().flex_col().gap(px(8.0)).p(px(16.0));
@@ -874,13 +924,7 @@ impl Render for IosVerticalScrollDemo {
                             .child("Vertical Scroll (1-finger)"),
                     ),
             )
-            .child(
-                div()
-                    .id("vscroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .child(list),
-            )
+            .child(div().id("vscroll").flex_1().overflow_y_scroll().child(list))
     }
 }
 
@@ -900,8 +944,16 @@ struct IosHorizontalScrollDemo;
 impl Render for IosHorizontalScrollDemo {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let colors = [
-            0xf38ba8u32, 0xa6e3a1, 0x89b4fa, 0xfab387, 0xcba6f7,
-            0xf9e2af, 0x94e2d5, 0xf2cdcd, 0x89dceb, 0xb4befe,
+            0xf38ba8u32,
+            0xa6e3a1,
+            0x89b4fa,
+            0xfab387,
+            0xcba6f7,
+            0xf9e2af,
+            0x94e2d5,
+            0xf2cdcd,
+            0x89dceb,
+            0xb4befe,
         ];
 
         let card_count = 30;
@@ -932,16 +984,8 @@ impl Render for IosHorizontalScrollDemo {
                     .justify_center()
                     .gap(px(8.0))
                     .text_color(rgb(0x1e1e2e))
-                    .child(
-                        div()
-                            .text_size(px(24.0))
-                            .child(format!("{}", i + 1)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .child(format!("Card {}", i + 1)),
-                    ),
+                    .child(div().text_size(px(24.0)).child(format!("{}", i + 1)))
+                    .child(div().text_size(px(14.0)).child(format!("Card {}", i + 1))),
             );
         }
 
@@ -966,18 +1010,14 @@ impl Render for IosHorizontalScrollDemo {
                     ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .id("hscroll")
-                            .w_full()
-                            .h(px(220.0))
-                            .overflow_x_scroll()
-                            .child(strip),
-                    ),
+                div().flex_1().flex().items_center().child(
+                    div()
+                        .id("hscroll")
+                        .w_full()
+                        .h(px(220.0))
+                        .overflow_x_scroll()
+                        .child(strip),
+                ),
             )
     }
 }
@@ -1017,11 +1057,7 @@ impl Render for IosPinchDemo {
                 this.scale = this.scale.clamp(0.25, 5.0);
                 cx.notify();
             }))
-            .child(
-                div()
-                    .text_size(px(24.0))
-                    .child("Pinch to Scale"),
-            )
+            .child(div().text_size(px(24.0)).child("Pinch to Scale"))
             .child(
                 div()
                     .w(px(size))
@@ -1032,11 +1068,7 @@ impl Render for IosPinchDemo {
                     .items_center()
                     .justify_center()
                     .text_color(rgb(0x1e1e2e))
-                    .child(
-                        div()
-                            .text_size(px(16.0))
-                            .child(format!("{:.1}x", scale)),
-                    ),
+                    .child(div().text_size(px(16.0)).child(format!("{:.1}x", scale))),
             )
             .child(
                 div()
@@ -1081,15 +1113,13 @@ impl Render for IosRotationDemo {
             .gap(px(24.0))
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
-            .on_rotation(cx.listener(|this: &mut Self, event: &RotationEvent, _, cx| {
-                this.angle_rad += event.rotation;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .text_size(px(24.0))
-                    .child("Two-Finger Rotate"),
+            .on_rotation(
+                cx.listener(|this: &mut Self, event: &RotationEvent, _, cx| {
+                    this.angle_rad += event.rotation;
+                    cx.notify();
+                }),
             )
+            .child(div().text_size(px(24.0)).child("Two-Finger Rotate"))
             .child(
                 div()
                     .w(px(160.0))
@@ -1142,7 +1172,479 @@ pub extern "C" fn gpui_ios_run_rotation_demo() {
 }
 
 // ---------------------------------------------------------------------------
-// 12. Native Controls Demo — showcases platform-native UIKit controls on iOS
+// 12. Controls Demo — GPU-painted GPUI controls on iOS
+// ---------------------------------------------------------------------------
+
+struct IosControlsDemo {
+    focus_handle: FocusHandle,
+    button_tap_count: usize,
+    switch_on: bool,
+    checkbox_checked: bool,
+    slider_value: f32,
+    stepper_value: i32,
+    text_field_value: String,
+    selected_segment: usize,
+}
+
+impl Focusable for IosControlsDemo {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for IosControlsDemo {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let button_tap_count = self.button_tap_count;
+        let switch_on = self.switch_on;
+        let checkbox_checked = self.checkbox_checked;
+        let slider_value = self.slider_value;
+        let stepper_value = self.stepper_value;
+        let text_field_value = self.text_field_value.clone();
+        let selected_segment = self.selected_segment;
+
+        let slider_percent = (slider_value * 100.0).round() as i32;
+        let progress_value = slider_value;
+        let focused = self.focus_handle.is_focused(window);
+
+        fn row(label: &str, control: impl IntoElement) -> gpui::Div {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .w_full()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .text_size(px(15.0))
+                        .text_color(rgb(0xcdd6f4))
+                        .flex_shrink_0()
+                        .child(label.to_string()),
+                )
+                .child(control)
+        }
+
+        let section = |title: &str| {
+            div().w_full().pt(px(16.0)).pb(px(4.0)).child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(0x6c7086))
+                    .child(title.to_string()),
+            )
+        };
+
+        let mut slider_ticks = div().flex().flex_row().gap(px(2.0));
+        for i in 0..=20 {
+            let tick_value = i as f32 / 20.0;
+            let active = tick_value <= slider_value + 0.0001;
+            let tick_color = if active { 0x89b4fa } else { 0x45475a };
+            slider_ticks = slider_ticks.child(
+                div()
+                    .w(px(8.0))
+                    .h(px(18.0))
+                    .rounded(px(2.0))
+                    .bg(rgb(tick_color))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.slider_value = tick_value;
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+
+        let text_border_color = if focused { 0x89b4fa } else { 0x585b70 };
+        let text_display = if text_field_value.is_empty() && !focused {
+            "Tap here to type...".to_string()
+        } else if text_field_value.is_empty() {
+            "|".to_string()
+        } else {
+            format!("{}|", text_field_value)
+        };
+
+        let mut toggle_group = div()
+            .flex()
+            .flex_row()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(0x585b70))
+            .overflow_hidden();
+
+        for (index, label) in ["One", "Two", "Three"].iter().enumerate() {
+            let is_selected = selected_segment == index;
+            let bg = if is_selected { 0x89b4fa } else { 0x313244 };
+            let fg = if is_selected { 0x1e1e2e } else { 0xcdd6f4 };
+            toggle_group = toggle_group.child(
+                div()
+                    .px(px(12.0))
+                    .py(px(6.0))
+                    .bg(rgb(bg))
+                    .text_color(rgb(fg))
+                    .child((*label).to_string())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.selected_segment = index;
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+
+        let mut content = div().flex().flex_col().gap(px(10.0)).p(px(20.0)).w_full();
+
+        content = content.child(
+            div()
+                .text_size(px(24.0))
+                .text_color(rgb(0xcdd6f4))
+                .pb(px(8.0))
+                .child("Controls"),
+        );
+
+        content = content.child(section("BUTTON")).child(row(
+            &format!("Taps: {}", button_tap_count),
+            div()
+                .px(px(12.0))
+                .py(px(8.0))
+                .rounded(px(8.0))
+                .bg(rgb(0x89b4fa))
+                .text_color(rgb(0x1e1e2e))
+                .child("Tap Me")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.button_tap_count += 1;
+                        cx.notify();
+                    }),
+                ),
+        ));
+
+        content = content.child(section("SWITCH")).child(row(
+            &format!("Switch: {}", if switch_on { "ON" } else { "OFF" }),
+            div()
+                .w(px(52.0))
+                .h(px(30.0))
+                .rounded(px(15.0))
+                .bg(rgb(if switch_on { 0xa6e3a1 } else { 0x585b70 }))
+                .flex()
+                .items_center()
+                .justify_start()
+                .child(
+                    div()
+                        .w(px(22.0))
+                        .h(px(22.0))
+                        .ml(if switch_on { px(27.0) } else { px(3.0) })
+                        .rounded(px(11.0))
+                        .bg(rgb(0xf5e0dc)),
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.switch_on = !this.switch_on;
+                        cx.notify();
+                    }),
+                ),
+        ));
+
+        content = content.child(section("CHECKBOX")).child(row(
+            &format!("Checked: {}", checkbox_checked),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .w(px(20.0))
+                        .h(px(20.0))
+                        .rounded(px(4.0))
+                        .border_1()
+                        .border_color(rgb(0x89b4fa))
+                        .bg(rgb(if checkbox_checked { 0x89b4fa } else { 0x1e1e2e }))
+                        .text_color(rgb(0x1e1e2e))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(if checkbox_checked { "✓" } else { "" }),
+                )
+                .child("Enable feature")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.checkbox_checked = !this.checkbox_checked;
+                        cx.notify();
+                    }),
+                ),
+        ));
+
+        content = content.child(section("SLIDER")).child(row(
+            &format!("Value: {}%", slider_percent),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(slider_ticks)
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x6c7086))
+                        .child("Tap ticks to adjust"),
+                ),
+        ));
+
+        content = content.child(section("STEPPER")).child(row(
+            &format!("Count: {}", stepper_value),
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x313244))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("-")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.stepper_value = (this.stepper_value - 1).clamp(0, 20);
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .w(px(48.0))
+                        .text_center()
+                        .child(stepper_value.to_string()),
+                )
+                .child(
+                    div()
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x313244))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("+")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.stepper_value = (this.stepper_value + 1).clamp(0, 20);
+                                cx.notify();
+                            }),
+                        ),
+                ),
+        ));
+
+        content = content.child(section("TEXT FIELD")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(40.0))
+                        .px(px(10.0))
+                        .bg(rgb(0x313244))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(rgb(text_border_color))
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_size(px(14.0))
+                                .text_color(if text_field_value.is_empty() && !focused {
+                                    rgb(0x6c7086)
+                                } else {
+                                    rgb(0xcdd6f4)
+                                })
+                                .child(text_display),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|_this, _, window, cx| {
+                                cx.focus_self(window);
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .child(div().text_size(px(12.0)).text_color(rgb(0x6c7086)).child(
+                    if text_field_value.is_empty() {
+                        "No text entered".to_string()
+                    } else {
+                        format!("Text: {}", text_field_value)
+                    },
+                )),
+        );
+
+        content = content.child(section("PROGRESS BAR")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .w_full()
+                        .h(px(12.0))
+                        .rounded(px(6.0))
+                        .bg(rgb(0x45475a))
+                        .child(
+                            div()
+                                .w(px(progress_value * 260.0))
+                                .h(px(12.0))
+                                .rounded(px(6.0))
+                                .bg(rgb(0xa6e3a1)),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x6c7086))
+                        .child(format!("{}% (driven by slider)", slider_percent)),
+                ),
+        );
+
+        content = content.child(section("TOGGLE GROUP")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(toggle_group)
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x6c7086))
+                        .child(format!(
+                            "Selected: {} ({})",
+                            ["One", "Two", "Three"][selected_segment],
+                            selected_segment,
+                        )),
+                ),
+        );
+
+        content = content.child(section("IMAGE (GPU-PAINTED)")).child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(16.0))
+                .child(
+                    div()
+                        .w(px(40.0))
+                        .h(px(40.0))
+                        .rounded(px(20.0))
+                        .bg(rgb(0x89b4fa))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("🌍"),
+                )
+                .child(
+                    div()
+                        .w(px(40.0))
+                        .h(px(40.0))
+                        .rounded(px(20.0))
+                        .bg(rgb(0xf9e2af))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("⭐"),
+                )
+                .child(
+                    div()
+                        .w(px(40.0))
+                        .h(px(40.0))
+                        .rounded(px(20.0))
+                        .bg(rgb(0xf2cdcd))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("❤"),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(0xa6adc8))
+                        .child("GPUI painted"),
+                ),
+        );
+
+        div()
+            .track_focus(&self.focus_handle)
+            .on_key_down(
+                cx.listener(|this: &mut Self, event: &KeyDownEvent, window, cx| {
+                    if !this.focus_handle.is_focused(window) {
+                        return;
+                    }
+
+                    let key = &event.keystroke.key;
+                    if key == "backspace" {
+                        this.text_field_value.pop();
+                        cx.notify();
+                    } else if key == "enter" {
+                        log::info!("controls text submit: {:?}", this.text_field_value);
+                    } else if let Some(ch) = &event.keystroke.key_char {
+                        this.text_field_value.push_str(ch);
+                        cx.notify();
+                    }
+                }),
+            )
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x1e1e2e))
+            .text_color(rgb(0xcdd6f4))
+            .child(
+                div()
+                    .w_full()
+                    .h(px(60.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(rgb(0x313244))
+                    .child(div().text_size(px(20.0)).child("Controls Demo")),
+            )
+            .child(
+                div()
+                    .id("controls-scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .child(content),
+            )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn gpui_ios_run_controls_demo() {
+    run_ios_app("dev.glasshq.GPUIiOSControlsDemo", |_window, cx| {
+        IosControlsDemo {
+            focus_handle: cx.focus_handle(),
+            button_tap_count: 0,
+            switch_on: false,
+            checkbox_checked: false,
+            slider_value: 0.5,
+            stepper_value: 0,
+            text_field_value: String::new(),
+            selected_segment: 0,
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 13. Native Controls Demo — showcases platform-native UIKit controls on iOS
 // ---------------------------------------------------------------------------
 
 struct IosNativeControlsDemo {
@@ -1165,7 +1667,7 @@ impl Render for IosNativeControlsDemo {
         let stepper_value = self.stepper_value;
         let text_field_value = self.text_field_value.clone();
         let progress_value = self.progress_value;
-        let selected_segment = self.selected_segment;
+        let selected_segment = self.selected_segment.min(2);
 
         // Row helper: label on the left, control on the right
         fn row(label: &str, control: impl IntoElement) -> gpui::Div {
@@ -1188,24 +1690,15 @@ impl Render for IosNativeControlsDemo {
 
         // Section header
         let section = |title: &str| {
-            div()
-                .w_full()
-                .pt(px(16.0))
-                .pb(px(4.0))
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(rgb(0x6c7086))
-                        .child(title.to_string()),
-                )
+            div().w_full().pt(px(16.0)).pb(px(4.0)).child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(rgb(0x6c7086))
+                    .child(title.to_string()),
+            )
         };
 
-        let mut content = div()
-            .flex()
-            .flex_col()
-            .gap(px(10.0))
-            .p(px(20.0))
-            .w_full();
+        let mut content = div().flex().flex_col().gap(px(10.0)).p(px(20.0)).w_full();
 
         // --- Title ---
         content = content.child(
@@ -1217,210 +1710,192 @@ impl Render for IosNativeControlsDemo {
         );
 
         // --- Button ---
-        content = content
-            .child(section("BUTTON"))
-            .child(
-                row(
-                    &format!("Taps: {}", button_tap_count),
-                    native_button("demo-btn", "Tap Me")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.button_tap_count += 1;
-                            log::info!("native button tapped: {}", this.button_tap_count);
-                            cx.notify();
-                        })),
-                ),
-            );
+        content = content.child(section("BUTTON")).child(row(
+            &format!("Taps: {}", button_tap_count),
+            native_button("demo-btn", "Tap Me").on_click(cx.listener(
+                |this, _event, _window, cx| {
+                    this.button_tap_count += 1;
+                    log::info!("native button tapped: {}", this.button_tap_count);
+                    cx.notify();
+                },
+            )),
+        ));
 
         // --- Switch ---
-        content = content
-            .child(section("SWITCH"))
-            .child(
-                row(
-                    &format!("Switch: {}", if switch_on { "ON" } else { "OFF" }),
-                    native_switch("demo-switch")
-                        .checked(switch_on)
-                        .on_change(cx.listener(|this, event: &gpui::SwitchChangeEvent, _window, cx| {
-                            this.switch_on = event.checked;
-                            log::info!("switch changed: {}", this.switch_on);
-                            cx.notify();
-                        })),
+        content = content.child(section("SWITCH")).child(row(
+            &format!("Switch: {}", if switch_on { "ON" } else { "OFF" }),
+            native_switch("demo-switch")
+                .checked(switch_on)
+                .on_change(
+                    cx.listener(|this, event: &gpui::SwitchChangeEvent, _window, cx| {
+                        this.switch_on = event.checked;
+                        log::info!("switch changed: {}", this.switch_on);
+                        cx.notify();
+                    }),
                 ),
-            );
+        ));
 
         // --- Checkbox ---
-        content = content
-            .child(section("CHECKBOX"))
-            .child(
-                row(
-                    &format!("Checked: {}", checkbox_checked),
-                    native_checkbox("demo-checkbox", "Enable feature")
-                        .checked(checkbox_checked)
-                        .on_change(cx.listener(|this, event: &gpui::CheckboxChangeEvent, _window, cx| {
-                            this.checkbox_checked = event.checked;
-                            log::info!("checkbox changed: {}", this.checkbox_checked);
-                            cx.notify();
-                        })),
+        content = content.child(section("CHECKBOX")).child(row(
+            &format!("Checked: {}", checkbox_checked),
+            native_checkbox("demo-checkbox", "Enable feature")
+                .checked(checkbox_checked)
+                .on_change(
+                    cx.listener(|this, event: &gpui::CheckboxChangeEvent, _window, cx| {
+                        this.checkbox_checked = event.checked;
+                        log::info!("checkbox changed: {}", this.checkbox_checked);
+                        cx.notify();
+                    }),
                 ),
-            );
+        ));
 
         // --- Slider ---
-        content = content
-            .child(section("SLIDER"))
-            .child(
-                row(
-                    &format!("Value: {:.0}%", slider_value * 100.0),
-                    native_slider("demo-slider")
-                        .range(0.0, 1.0)
-                        .value(slider_value)
-                        .on_change(cx.listener(|this, event: &gpui::SliderChangeEvent, _window, cx| {
-                            this.slider_value = event.value;
-                            // Drive the progress bar from the slider
-                            this.progress_value = event.value;
-                            cx.notify();
-                        })),
+        content = content.child(section("SLIDER")).child(row(
+            &format!("Value: {:.0}%", slider_value * 100.0),
+            native_slider("demo-slider")
+                .range(0.0, 1.0)
+                .value(slider_value)
+                .on_change(
+                    cx.listener(|this, event: &gpui::SliderChangeEvent, _window, cx| {
+                        this.slider_value = event.value;
+                        // Drive the progress bar from the slider
+                        this.progress_value = event.value;
+                        cx.notify();
+                    }),
                 ),
-            );
+        ));
 
         // --- Stepper ---
-        content = content
-            .child(section("STEPPER"))
-            .child(
-                row(
-                    &format!("Count: {:.0}", stepper_value),
-                    native_stepper("demo-stepper")
-                        .range(0.0, 20.0)
-                        .value(stepper_value)
-                        .increment(1.0)
-                        .on_change(cx.listener(|this, event: &gpui::StepperChangeEvent, _window, cx| {
-                            this.stepper_value = event.value;
-                            log::info!("stepper changed: {}", this.stepper_value);
-                            cx.notify();
-                        })),
+        content = content.child(section("STEPPER")).child(row(
+            &format!("Count: {:.0}", stepper_value),
+            native_stepper("demo-stepper")
+                .range(0.0, 20.0)
+                .value(stepper_value)
+                .increment(1.0)
+                .on_change(
+                    cx.listener(|this, event: &gpui::StepperChangeEvent, _window, cx| {
+                        this.stepper_value = event.value;
+                        log::info!("stepper changed: {}", this.stepper_value);
+                        cx.notify();
+                    }),
                 ),
-            );
+        ));
 
         // --- Text Field ---
-        content = content
-            .child(section("TEXT FIELD"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        native_text_field("demo-textfield")
-                            .placeholder("Type something...")
-                            .value(gpui::SharedString::from(text_field_value.clone()))
-                            .on_change(cx.listener(|this, event: &gpui::TextChangeEvent, _window, cx| {
+        content = content.child(section("TEXT FIELD")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    native_text_field("demo-textfield")
+                        .placeholder("Type something...")
+                        .value(gpui::SharedString::from(text_field_value.clone()))
+                        .on_change(cx.listener(
+                            |this, event: &gpui::TextChangeEvent, _window, cx| {
                                 this.text_field_value = event.text.clone();
                                 cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(0x6c7086))
-                            .child(if text_field_value.is_empty() {
-                                "No text entered".to_string()
-                            } else {
-                                format!("Text: {}", text_field_value)
-                            }),
-                    ),
-            );
+                            },
+                        )),
+                )
+                .child(div().text_size(px(12.0)).text_color(rgb(0x6c7086)).child(
+                    if text_field_value.is_empty() {
+                        "No text entered".to_string()
+                    } else {
+                        format!("Text: {}", text_field_value)
+                    },
+                )),
+        );
 
         // --- Progress Bar ---
-        content = content
-            .child(section("PROGRESS BAR"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        native_progress_bar("demo-progress")
-                            .range(0.0, 1.0)
-                            .value(progress_value),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(0x6c7086))
-                            .child(format!("{:.0}% (drag slider above)", progress_value * 100.0)),
-                    ),
-            );
+        content = content.child(section("PROGRESS BAR")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    native_progress_bar("demo-progress")
+                        .range(0.0, 1.0)
+                        .value(progress_value),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x6c7086))
+                        .child(format!(
+                            "{:.0}% (drag slider above)",
+                            progress_value * 100.0
+                        )),
+                ),
+        );
 
         // --- Toggle Group ---
-        content = content
-            .child(section("TOGGLE GROUP"))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.0))
-                    .child(
-                        native_toggle_group(
-                            "demo-toggle",
-                            &["One", "Two", "Three"],
-                        )
+        content = content.child(section("TOGGLE GROUP")).child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(
+                    native_toggle_group("demo-toggle", &["One", "Two", "Three"])
                         .selected_index(selected_segment)
-                        .on_select(cx.listener(|this, event: &gpui::SegmentSelectEvent, _window, cx| {
-                            this.selected_segment = event.index;
-                            log::info!("segment selected: {}", this.selected_segment);
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(rgb(0x6c7086))
-                            .child(format!(
-                                "Selected: {} ({})",
-                                ["One", "Two", "Three"][selected_segment],
-                                selected_segment,
-                            )),
-                    ),
-            );
+                        .on_select(cx.listener(
+                            |this, event: &gpui::SegmentSelectEvent, _window, cx| {
+                                this.selected_segment = event.index.min(2);
+                                log::info!("segment selected: {}", this.selected_segment);
+                                cx.notify();
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(rgb(0x6c7086))
+                        .child(format!(
+                            "Selected: {} ({})",
+                            ["One", "Two", "Three"][selected_segment],
+                            selected_segment,
+                        )),
+                ),
+        );
 
         // --- Image View (SF Symbol) ---
-        content = content
-            .child(section("IMAGE VIEW (SF Symbol)"))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(16.0))
-                    .child(
-                        native_image_view("demo-img-globe")
-                            .sf_symbol_config("globe", 32.0, NativeImageSymbolWeight::Medium)
-                            .tint_color(0.337, 0.706, 0.98, 1.0) // blue
-                            .w(px(40.0))
-                            .h(px(40.0)),
-                    )
-                    .child(
-                        native_image_view("demo-img-star")
-                            .sf_symbol_config("star.fill", 32.0, NativeImageSymbolWeight::Medium)
-                            .tint_color(0.949, 0.886, 0.686, 1.0) // yellow
-                            .w(px(40.0))
-                            .h(px(40.0)),
-                    )
-                    .child(
-                        native_image_view("demo-img-heart")
-                            .sf_symbol_config("heart.fill", 32.0, NativeImageSymbolWeight::Medium)
-                            .tint_color(0.953, 0.545, 0.659, 1.0) // pink
-                            .w(px(40.0))
-                            .h(px(40.0)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .text_color(rgb(0xa6adc8))
-                            .child("SF Symbols"),
-                    ),
-            );
+        content = content.child(section("IMAGE VIEW (SF Symbol)")).child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(16.0))
+                .child(
+                    native_image_view("demo-img-globe")
+                        .sf_symbol_config("globe", 32.0, NativeImageSymbolWeight::Medium)
+                        .tint_color(0.337, 0.706, 0.98, 1.0) // blue
+                        .w(px(40.0))
+                        .h(px(40.0)),
+                )
+                .child(
+                    native_image_view("demo-img-star")
+                        .sf_symbol_config("star.fill", 32.0, NativeImageSymbolWeight::Medium)
+                        .tint_color(0.949, 0.886, 0.686, 1.0) // yellow
+                        .w(px(40.0))
+                        .h(px(40.0)),
+                )
+                .child(
+                    native_image_view("demo-img-heart")
+                        .sf_symbol_config("heart.fill", 32.0, NativeImageSymbolWeight::Medium)
+                        .tint_color(0.953, 0.545, 0.659, 1.0) // pink
+                        .w(px(40.0))
+                        .h(px(40.0)),
+                )
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(rgb(0xa6adc8))
+                        .child("SF Symbols"),
+                ),
+        );
 
         // Scrollable wrapper
         div()
@@ -1437,11 +1912,7 @@ impl Render for IosNativeControlsDemo {
                     .items_center()
                     .justify_center()
                     .bg(rgb(0x313244))
-                    .child(
-                        div()
-                            .text_size(px(20.0))
-                            .child("Native Controls Demo"),
-                    ),
+                    .child(div().text_size(px(20.0)).child("Native Controls Demo")),
             )
             .child(
                 div()
@@ -1455,9 +1926,8 @@ impl Render for IosNativeControlsDemo {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn gpui_ios_run_native_controls_demo() {
-    run_ios_app(
-        "dev.glasshq.GPUIiOSNativeControlsDemo",
-        |_, _| IosNativeControlsDemo {
+    run_ios_app("dev.glasshq.GPUIiOSNativeControlsDemo", |_, _| {
+        IosNativeControlsDemo {
             button_tap_count: 0,
             switch_on: false,
             checkbox_checked: false,
@@ -1466,8 +1936,8 @@ pub extern "C" fn gpui_ios_run_native_controls_demo() {
             text_field_value: String::new(),
             progress_value: 0.5,
             selected_segment: 0,
-        },
-    );
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,11 +1956,16 @@ const AVAILABLE_DEMOS: &[&str] = &[
     "horizontal_scroll",
     "pinch",
     "rotation",
+    "controls",
     "native_controls",
 ];
 
 #[unsafe(no_mangle)]
-pub extern "C" fn gpui_ios_run_demo(name: *const std::ffi::c_char) {
+/// Run a named iOS demo entrypoint.
+///
+/// # Safety
+/// `name` must be a valid, non-null, NUL-terminated C string pointer.
+pub unsafe extern "C" fn gpui_ios_run_demo(name: *const std::ffi::c_char) {
     let name = unsafe { std::ffi::CStr::from_ptr(name) }
         .to_str()
         .unwrap_or("hello_world");
@@ -1506,6 +1981,7 @@ pub extern "C" fn gpui_ios_run_demo(name: *const std::ffi::c_char) {
         "horizontal_scroll" => gpui_ios_run_horizontal_scroll_demo(),
         "pinch" => gpui_ios_run_pinch_demo(),
         "rotation" => gpui_ios_run_rotation_demo(),
+        "controls" => gpui_ios_run_controls_demo(),
         "native_controls" => gpui_ios_run_native_controls_demo(),
         unknown => {
             // Init logging so the error is visible
@@ -1530,6 +2006,9 @@ pub extern "C" fn gpui_ios_list_demos() -> *mut std::ffi::c_char {
 }
 
 /// Free a string returned by `gpui_ios_list_demos`.
+///
+/// # Safety
+/// `s` must be a pointer returned by `gpui_ios_list_demos` and not already freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gpui_ios_free_string(s: *mut std::ffi::c_char) {
     if !s.is_null() {

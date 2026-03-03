@@ -63,6 +63,8 @@ if [[ -z "$DEMO" ]]; then
   echo "  horizontal_scroll  Single-finger horizontal card strip"
   echo "  pinch              Pinch gesture to scale (0.25x–5x)"
   echo "  rotation           Two-finger rotation with color shift"
+  echo "  controls             GPUI-painted controls demo"
+  echo "  native_controls      UIKit native controls demo"
   echo ""
   echo "Usage:"
   echo "  ./ios/run <demo>           build + run on physical device"
@@ -164,7 +166,8 @@ print('')
   echo ""
 
   # Launch with demo name as argument, stream stdout/stderr
-  xcrun simctl launch --console "$BOOTED_UDID" "$BUNDLE_ID" "$DEMO"
+  SIMCTL_CHILD_GPUI_IOS_DEMO="$DEMO" \
+    xcrun simctl launch --console "$BOOTED_UDID" "$BUNDLE_ID" "$DEMO"
 
 else
   # =========================================================================
@@ -227,6 +230,15 @@ if pick:
   }
   trap cleanup EXIT INT TERM
 
+  # Clear stale listener from previous interrupted runs.
+  if command -v lsof >/dev/null 2>&1; then
+    STALE_LOG_PID="$(lsof -tiTCP:"$LOG_PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+    if [[ -n "$STALE_LOG_PID" ]]; then
+      kill "$STALE_LOG_PID" 2>/dev/null || true
+      sleep 0.1
+    fi
+  fi
+
   if command -v socat >/dev/null 2>&1; then
     socat -u TCP-LISTEN:"$LOG_PORT",reuseaddr,fork STDOUT &
     LOG_LISTENER_PID=$!
@@ -261,7 +273,7 @@ if pick:
   echo ""
   echo "Launching $DEMO..."
   set +e
-  launch_output="$(xcrun devicectl device process launch \
+  launch_output="$(DEVICECTL_CHILD_GPUI_IOS_DEMO="$DEMO" xcrun devicectl device process launch \
     --terminate-existing \
     --device "$COREDEVICE_ID" \
     "$BUNDLE_ID" \

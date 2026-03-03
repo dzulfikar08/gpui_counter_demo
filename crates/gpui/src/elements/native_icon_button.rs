@@ -3,9 +3,9 @@ use std::ffi::c_void;
 use std::rc::Rc;
 
 use crate::{
-    AbsoluteLength, App, Bounds, ClickEvent, DefiniteLength, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Length, Pixels, SharedString, Style,
-    StyleRefinement, Styled, Window, px,
+    px, AbsoluteLength, App, Bounds, ClickEvent, DefiniteLength, Element, ElementId,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, Length, Pixels, SharedString,
+    Style, StyleRefinement, Styled, Window,
 };
 
 use super::native_button::{NativeButtonStyle, NativeButtonTint};
@@ -435,6 +435,7 @@ impl Element for NativeIconButton {
                                     native_controls::set_native_button_bordered(button, true);
                                 }
                                 NativeButtonStyle::Borderless => {
+                                    native_controls::set_native_button_bezel_style(button, 0);
                                     native_controls::set_native_button_bordered(button, false);
                                 }
                             }
