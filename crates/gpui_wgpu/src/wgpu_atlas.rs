@@ -21,6 +21,13 @@ fn etagere_point_to_device(point: etagere::Point) -> Point<DevicePixels> {
 
 pub struct WgpuAtlas(Mutex<WgpuAtlasState>);
 
+#[cfg(target_family = "wasm")]
+// Safety: web GPUI rendering runs on the browser main thread. The underlying
+// WebGPU handles are never shared across real threads in this target.
+unsafe impl Send for WgpuAtlas {}
+#[cfg(target_family = "wasm")]
+unsafe impl Sync for WgpuAtlas {}
+
 struct PendingUpload {
     id: AtlasTextureId,
     bounds: Bounds<DevicePixels>,

@@ -56,6 +56,7 @@ mod view;
 mod window;
 
 #[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support"))]
 pub use proptest;
 
 #[cfg(doc)]

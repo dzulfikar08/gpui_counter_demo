@@ -130,6 +130,11 @@ impl Drop for AppRefMut<'_> {
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static WEB_APP_KEEPALIVE: std::cell::RefCell<Vec<Rc<AppCell>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
@@ -175,6 +180,9 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+
+        #[cfg(target_family = "wasm")]
+        WEB_APP_KEEPALIVE.with(|apps| apps.borrow_mut().push(this.clone()));
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);

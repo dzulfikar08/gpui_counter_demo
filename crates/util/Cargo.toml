@@ -18,14 +18,11 @@ test-support = ["git2", "rand"]
 
 [dependencies]
 anyhow.workspace = true
-async-fs.workspace = true
 async_zip.workspace = true
 collections.workspace = true
-dirs.workspace = true
 dunce = "1.0"
 futures-lite.workspace = true
 futures.workspace = true
-git2 = { workspace = true, optional = true }
 globset.workspace = true
 itertools.workspace = true
 log.workspace = true
@@ -37,14 +34,19 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 shlex.workspace = true
-smol.workspace = true
 take-until.workspace = true
 tempfile.workspace = true
 unicase.workspace = true
-walkdir.workspace = true
 percent-encoding = "2.3"
 url.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+smol.workspace = true
 which.workspace = true
+git2 = { workspace = true, optional = true }
+async-fs.workspace = true
+walkdir.workspace = true
+dirs.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 command-fds = "0.3.1"
@@ -59,6 +61,5 @@ tendril = "0.4.3"
 
 [dev-dependencies]
 git2.workspace = true
-indoc.workspace = true
 rand.workspace = true
 pretty_assertions.workspace = true

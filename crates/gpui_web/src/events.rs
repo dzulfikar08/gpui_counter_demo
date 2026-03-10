@@ -347,6 +347,7 @@ impl WebWindowInner {
                 modifiers,
                 key,
                 key_char,
+                native_key_code: None,
             };
 
             this.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
@@ -390,6 +391,7 @@ impl WebWindowInner {
                 modifiers,
                 key,
                 key_char,
+                native_key_code: None,
             };
 
             this.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));

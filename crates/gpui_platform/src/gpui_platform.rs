@@ -54,7 +54,7 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
     #[cfg(target_family = "wasm")]
     {
         let _ = headless;
-        Rc::new(gpui_web::WebPlatform::new())
+        Rc::new(gpui_web::WebPlatform::new(true))
     }
 }
 
