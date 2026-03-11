@@ -1,8 +1,8 @@
 use gpui::{
     Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformInput, PressureStage, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    NavigationDirection, PinchEvent, Pixels, PlatformInput, PressureStage, ScrollDelta,
+    ScrollWheelEvent, TouchPhase, point, px,
 };
 
 use crate::{
@@ -227,6 +227,24 @@ pub(crate) unsafe fn platform_input_from_native(
                     }
                     _ => None,
                 }
+            }
+            NSEventType::NSEventTypeMagnify => {
+                mouse_position(native_event, native_view, window_height).map(|position| {
+                    let phase = match native_event.phase() {
+                        NSEventPhase::NSEventPhaseMayBegin | NSEventPhase::NSEventPhaseBegan => {
+                            TouchPhase::Started
+                        }
+                        NSEventPhase::NSEventPhaseEnded => TouchPhase::Ended,
+                        _ => TouchPhase::Moved,
+                    };
+
+                    PlatformInput::Pinch(PinchEvent {
+                        position,
+                        delta: native_event.magnification() as f32,
+                        modifiers: read_modifiers(native_event),
+                        phase,
+                    })
+                })
             }
             NSEventType::NSScrollWheel => {
                 mouse_position(native_event, native_view, window_height).map(|position| {

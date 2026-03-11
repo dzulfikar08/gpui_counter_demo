@@ -447,17 +447,18 @@ impl MouseEvent for ScrollWheelEvent {}
 /// A pinch gesture event from the platform.
 #[derive(Clone, Debug, Default)]
 pub struct PinchEvent {
-    /// The center position of the pinch gesture on the window.
-    pub center: Point<Pixels>,
+    /// The position of the pinch center on the window.
+    pub position: Point<Pixels>,
 
-    /// The incremental scale factor (1.0 = no change).
-    pub scale: f32,
+    /// The zoom delta for this event.
+    /// Positive values indicate zooming in, negative values indicate zooming out.
+    pub delta: f32,
 
     /// The modifiers that were held down during the gesture.
     pub modifiers: Modifiers,
 
-    /// The phase of the touch event.
-    pub touch_phase: TouchPhase,
+    /// The phase of the pinch gesture.
+    pub phase: TouchPhase,
 }
 
 impl Sealed for PinchEvent {}

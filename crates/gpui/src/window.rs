@@ -6751,7 +6751,8 @@ impl Window {
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
             PlatformInput::Pinch(pinch) => {
-                self.mouse_position = pinch.center;
+                self.mouse_position = pinch.position;
+                self.modifiers = pinch.modifiers;
                 PlatformInput::Pinch(pinch)
             }
             PlatformInput::Rotation(rotation) => {

@@ -1984,10 +1984,10 @@ extern "C" fn handle_pinch(this: &Object, _sel: Sel, gesture: *mut Object) {
         dispatch_input(
             &state,
             PlatformInput::Pinch(PinchEvent {
-                center,
-                scale: scale as f32,
+                position: center,
+                delta: scale as f32 - 1.0,
                 modifiers,
-                touch_phase,
+                phase: touch_phase,
             }),
         );
     }

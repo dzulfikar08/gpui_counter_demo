@@ -1124,7 +1124,7 @@ impl Render for IosPinchDemo {
             .bg(rgb(0x1e1e2e))
             .text_color(rgb(0xcdd6f4))
             .on_pinch(cx.listener(|this: &mut Self, event: &PinchEvent, _, cx| {
-                this.scale *= event.scale;
+                this.scale *= 1.0 + event.delta;
                 this.scale = this.scale.clamp(0.25, 5.0);
                 cx.notify();
             }))
