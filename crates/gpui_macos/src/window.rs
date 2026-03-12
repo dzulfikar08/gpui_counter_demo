@@ -2019,6 +2019,44 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn defers_cursor_to_native_view(&self) -> bool {
+        let lock = self.0.lock();
+        let native_window = lock.native_window;
+        let native_view = lock.native_view.as_ptr() as id;
+        drop(lock);
+
+        unsafe {
+            if native_window == nil || native_view == nil {
+                return false;
+            }
+
+            let window_point: NSPoint = msg_send![native_window, mouseLocationOutsideOfEventStream];
+            let local_point: NSPoint = msg_send![native_view, convertPoint: window_point fromView: nil];
+            let hit_view: id = msg_send![native_view, hitTest: local_point];
+            if hit_view == nil {
+                return false;
+            }
+
+            let is_gpui_view: BOOL = msg_send![hit_view, isKindOfClass: class!(GPUIView)];
+            if is_gpui_view == YES {
+                return false;
+            }
+
+            let is_surface_view: BOOL = msg_send![hit_view, isKindOfClass: class!(GPUISurfaceView)];
+            if is_surface_view == YES {
+                return false;
+            }
+
+            let is_control: BOOL = msg_send![hit_view, isKindOfClass: class!(NSControl)];
+            if is_control == YES {
+                return true;
+            }
+
+            let is_text_view: BOOL = msg_send![hit_view, isKindOfClass: class!(NSTextView)];
+            is_text_view == YES
+        }
+    }
+
     fn show_native_alert_sheet(
         &self,
         alert_config: PlatformNativeAlert,

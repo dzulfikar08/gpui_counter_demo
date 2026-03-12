@@ -6648,6 +6648,11 @@ impl Window {
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
+            #[cfg(target_os = "macos")]
+            if self.platform_window.defers_cursor_to_native_view() {
+                return;
+            }
+
             let style = self
                 .rendered_frame
                 .cursor_style(self)
