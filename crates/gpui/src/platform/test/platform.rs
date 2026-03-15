@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
+    PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PromptButton,
     ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task,
     TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
@@ -95,6 +95,23 @@ pub(crate) struct TestPrompts {
 
 impl TestPlatform {
     pub fn new(executor: BackgroundExecutor, foreground_executor: ForegroundExecutor) -> Rc<Self> {
+        Self::with_text_system(executor, foreground_executor, Arc::new(NoopTextSystem))
+    }
+
+    pub fn with_text_system(
+        executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Rc<Self> {
+        Self::with_platform(executor, foreground_executor, text_system, None)
+    }
+
+    pub fn with_platform(
+        executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        text_system: Arc<dyn PlatformTextSystem>,
+        _renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    ) -> Rc<Self> {
         #[cfg(target_os = "windows")]
         let bitmap_factory = unsafe {
             windows::Win32::System::Ole::OleInitialize(None)
@@ -104,8 +121,6 @@ impl TestPlatform {
                     .expect("Error creating bitmap factory."),
             )
         };
-
-        let text_system = Arc::new(NoopTextSystem);
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,

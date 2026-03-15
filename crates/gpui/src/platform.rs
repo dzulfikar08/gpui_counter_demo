@@ -1073,6 +1073,15 @@ pub trait PlatformTextSystem: Send + Sync {
     -> TextRenderingMode;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+/// A renderer for headless test windows that can produce raster output.
+pub trait PlatformHeadlessRenderer: Send {
+    /// Render a scene into an RGBA image.
+    fn render_scene_to_image(&mut self, _scene: &Scene, _size: Size<DevicePixels>) -> Result<RgbaImage>;
+    /// Return the sprite atlas used by this renderer.
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+}
+
 #[expect(missing_docs)]
 pub struct NoopTextSystem;
 
