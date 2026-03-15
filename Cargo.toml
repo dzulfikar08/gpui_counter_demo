@@ -104,6 +104,7 @@ core-video = { version = "0.4.3", features = ["metal"] }
 ctor = "0.4.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+dunce = "1.0"
 env_logger = "0.11"
 futures = "0.3"
 futures-concurrency = "7.7.1"
