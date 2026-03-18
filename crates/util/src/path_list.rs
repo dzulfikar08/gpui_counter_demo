@@ -23,7 +23,7 @@ pub struct PathList {
     order: Arc<[usize]>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,
