@@ -1,4 +1,4 @@
-use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
+use crate::{px, FontId, Pixels, SharedString, TextRun, TextSystem};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -236,6 +236,9 @@ impl LineWrapper {
         matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
         matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
 
+        // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
+        matches!(c, '\u{0980}'..='\u{09FF}') ||
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
@@ -378,7 +381,7 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher, font};
+    use crate::{font, Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher};
     #[cfg(target_os = "macos")]
     use crate::{TextRun, WindowTextSystem, WrapBoundary};
 
@@ -856,6 +859,10 @@ mod tests {
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
         // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
         assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
+        // Bengali
+        assert_word("গিয়েছিলেন");
+        assert_word("ছেলে");
+        assert_word("হচ্ছিল");
 
         // non-word characters
         assert_not_word("你好");
