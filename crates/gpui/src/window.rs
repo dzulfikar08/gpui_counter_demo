@@ -4837,6 +4837,26 @@ impl Window {
         self.mouse_position
     }
 
+    /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
+    /// events will be routed to listeners that check this hitbox's `is_hovered` status,
+    /// regardless of actual hit testing. This enables drag operations that continue
+    /// even when the pointer moves outside the element's bounds.
+    ///
+    /// The capture is automatically released on mouse up.
+    pub fn capture_pointer(&mut self, hitbox_id: HitboxId) {
+        self.captured_hitbox = Some(hitbox_id);
+    }
+
+    /// Releases any active pointer capture.
+    pub fn release_pointer(&mut self) {
+        self.captured_hitbox = None;
+    }
+
+    /// Returns the hitbox that has captured the pointer, if any.
+    pub fn captured_hitbox(&self) -> Option<HitboxId> {
+        self.captured_hitbox
+    }
+
     /// The current state of the keyboard's modifiers
     pub fn modifiers(&self) -> Modifiers {
         self.modifiers
@@ -6850,6 +6870,11 @@ impl Window {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        }
+
+        // Auto-release pointer capture on mouse up.
+        if matches!(event, PlatformInput::MouseUp(_)) && self.captured_hitbox.is_some() {
+            self.captured_hitbox = None;
         }
 
         if self.invalidator.is_dirty() {
