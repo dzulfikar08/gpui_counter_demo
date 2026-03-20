@@ -429,6 +429,39 @@ impl WebWindowInner {
         })
     }
 
+    fn register_composition_start(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionstart", move |_event: JsValue| {
+            this.is_composing.set(true);
+        })
+    }
+
+    fn register_composition_update(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionupdate", move |event: JsValue| {
+            let event: web_sys::CompositionEvent = event.unchecked_into();
+            let data = event.data().unwrap_or_default();
+            this.is_composing.set(true);
+            this.with_input_handler(|handler| {
+                handler.replace_and_mark_text_in_range(None, &data, None);
+            });
+        })
+    }
+
+    fn register_composition_end(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("compositionend", move |event: JsValue| {
+            let event: web_sys::CompositionEvent = event.unchecked_into();
+            let data = event.data().unwrap_or_default();
+            this.is_composing.set(false);
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(None, &data);
+                handler.unmark_text();
+            });
+            this.input_element.set_value("");
+        })
+    }
+
     fn register_focus(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
         let this = Rc::clone(self);
         self.listen_input("focus", move |_event: JsValue| {
