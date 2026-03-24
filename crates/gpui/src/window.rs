@@ -3236,6 +3236,7 @@ pub struct Window {
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
@@ -3596,6 +3597,14 @@ impl Window {
                     .log_err();
             }
         }));
+        platform_window.on_button_layout_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
+                    .log_err();
+            }
+        }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
@@ -3763,6 +3772,7 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            button_layout_observers: SubscriberSet::new(),
             active,
             hovered,
             needs_present,
@@ -3852,6 +3862,22 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window button layout changes.
+    pub fn observe_button_layout_changed(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.button_layout_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
@@ -4290,6 +4316,12 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
 
         self.refresh();
+    }
+
+    pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
+        self.button_layout_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
     }
 
     /// Returns the appearance of the current window.

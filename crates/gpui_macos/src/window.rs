@@ -2,7 +2,6 @@ use crate::{
     BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, events::platform_input_from_native,
     mac_native_controls::MacNativeControls, ns_string, renderer,
 };
-use dispatch2::DispatchQueue;
 use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
@@ -21,6 +20,7 @@ use cocoa::{
         NSUserDefaults,
     },
 };
+use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
     ForegroundExecutor, HostedContentConfig, KeyDownEvent, Keystroke, Modifiers,
@@ -58,7 +58,10 @@ use std::{
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
-    sync::{Arc, OnceLock, Weak},
+    sync::{
+        Arc, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 use util::ResultExt;
@@ -568,6 +571,7 @@ pub(crate) struct MacWindowState {
     popover: Option<MacPopoverState>,
     panel: Option<MacPanelState>,
     activated_least_once: bool,
+    closed: Arc<AtomicBool>,
     // Set while configure_hosted_content is rearranging the NSView hierarchy.
     // AppKit fires synchronous callbacks (setFrameSize:, viewDidChangeBackingProperties)
     // during this work — the flag tells those callbacks to skip invoking resize_callback,
@@ -960,6 +964,7 @@ impl MacWindow {
                 popover: None,
                 panel: None,
                 activated_least_once: false,
+                closed: Arc::new(AtomicBool::new(false)),
                 configuring_hosted_content: false,
                 pending_resize_callback: false,
                 sheet_parent: None,
@@ -1247,6 +1252,12 @@ impl Drop for MacWindow {
     }
 }
 
+fn if_window_not_closed(closed: Arc<AtomicBool>, f: impl FnOnce()) {
+    if !closed.load(Ordering::Acquire) {
+        f();
+    }
+}
+
 impl PlatformWindow for MacWindow {
     fn bounds(&self) -> Bounds<Pixels> {
         self.0.as_ref().lock().bounds()
@@ -1271,14 +1282,15 @@ impl PlatformWindow for MacWindow {
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.setContentSize_(NSSize {
                         width: size.width.as_f32() as f64,
                         height: size.height.as_f32() as f64,
                     });
-                }
+                })
             })
             .detach();
     }
@@ -1287,7 +1299,9 @@ impl PlatformWindow for MacWindow {
         let native_window = self.0.lock().native_window;
         extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
             let native_window = context as id;
-            unsafe { let _: () = msg_send![native_window, mergeAllWindows:nil]; }
+            unsafe {
+                let _: () = msg_send![native_window, mergeAllWindows:nil];
+            }
         }
 
         unsafe {
@@ -1425,7 +1439,11 @@ impl PlatformWindow for MacWindow {
                         PlatformNativePopoverContentItem::IconLabel { .. } => 24.0,
                         PlatformNativePopoverContentItem::Button { .. } => 32.0,
                         PlatformNativePopoverContentItem::Toggle { description, .. } => {
-                            if description.is_some() { 44.0 } else { 30.0 }
+                            if description.is_some() {
+                                44.0
+                            } else {
+                                30.0
+                            }
                         }
                         PlatformNativePopoverContentItem::Checkbox { .. } => 24.0,
                         PlatformNativePopoverContentItem::ProgressBar { label, .. } => {
@@ -1448,160 +1466,161 @@ impl PlatformWindow for MacWindow {
                     let flipped_y = popover_config.content_height - top_y - height;
 
                     match item {
-                    PlatformNativePopoverContentItem::Label { text, bold } => {
-                        let font_size = if bold { 15.0 } else { 13.0 };
-                        let label_height = if bold { 22.0 } else { 18.0 };
-                        crate::native_controls::add_native_popover_label(
-                            content_view,
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                            label_height,
-                            font_size,
-                            bold,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::SmallLabel { text } => {
-                        crate::native_controls::add_native_popover_small_label(
-                            content_view,
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::IconLabel { icon, text } => {
-                        crate::native_controls::add_native_popover_icon_label(
-                            content_view,
-                            icon.as_ref(),
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::Button { title, on_click } => {
-                        let button = crate::native_controls::add_native_popover_button(
-                            content_view,
-                            title.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                            28.0,
-                        );
-                        if let Some(callback) = on_click {
-                            let target =
-                                crate::native_controls::set_native_button_action(button, callback);
-                            button_targets.push(target);
+                        PlatformNativePopoverContentItem::Label { text, bold } => {
+                            let font_size = if bold { 15.0 } else { 13.0 };
+                            let label_height = if bold { 22.0 } else { 18.0 };
+                            crate::native_controls::add_native_popover_label(
+                                content_view,
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                label_height,
+                                font_size,
+                                bold,
+                            );
                         }
-                    }
-                    PlatformNativePopoverContentItem::Toggle {
-                        text,
-                        checked,
-                        on_change,
-                        enabled,
-                        description,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_toggle(
-                            content_view,
-                            text.as_ref(),
+                        PlatformNativePopoverContentItem::SmallLabel { text } => {
+                            crate::native_controls::add_native_popover_small_label(
+                                content_view,
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::IconLabel { icon, text } => {
+                            crate::native_controls::add_native_popover_icon_label(
+                                content_view,
+                                icon.as_ref(),
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::Button { title, on_click } => {
+                            let button = crate::native_controls::add_native_popover_button(
+                                content_view,
+                                title.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                28.0,
+                            );
+                            if let Some(callback) = on_click {
+                                let target = crate::native_controls::set_native_button_action(
+                                    button, callback,
+                                );
+                                button_targets.push(target);
+                            }
+                        }
+                        PlatformNativePopoverContentItem::Toggle {
+                            text,
                             checked,
-                            padding,
-                            flipped_y,
-                            content_width,
-                            enabled,
-                            description.as_ref().map(|s| AsRef::<str>::as_ref(s)),
                             on_change,
-                        );
-                        if !target.is_null() {
-                            switch_targets.push(target);
+                            enabled,
+                            description,
+                        } => {
+                            let target = crate::native_controls::add_native_popover_toggle(
+                                content_view,
+                                text.as_ref(),
+                                checked,
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                description.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                on_change,
+                            );
+                            if !target.is_null() {
+                                switch_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::Checkbox {
-                        text,
-                        checked,
-                        on_change,
-                        enabled,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_checkbox(
-                            content_view,
-                            text.as_ref(),
+                        PlatformNativePopoverContentItem::Checkbox {
+                            text,
                             checked,
-                            padding,
-                            flipped_y,
-                            content_width,
-                            enabled,
                             on_change,
-                        );
-                        if !target.is_null() {
-                            checkbox_targets.push(target);
+                            enabled,
+                        } => {
+                            let target = crate::native_controls::add_native_popover_checkbox(
+                                content_view,
+                                text.as_ref(),
+                                checked,
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                on_change,
+                            );
+                            if !target.is_null() {
+                                checkbox_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::ProgressBar { value, max, label } => {
-                        crate::native_controls::add_native_popover_progress(
-                            content_view,
-                            value,
-                            max,
-                            label.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::ColorDot {
-                        color,
-                        text,
-                        detail,
-                        on_click,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_color_dot(
-                            content_view,
+                        PlatformNativePopoverContentItem::ProgressBar { value, max, label } => {
+                            crate::native_controls::add_native_popover_progress(
+                                content_view,
+                                value,
+                                max,
+                                label.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::ColorDot {
                             color,
-                            text.as_ref(),
-                            detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
+                            text,
+                            detail,
                             on_click,
-                        );
-                        if !target.is_null() {
-                            button_targets.push(target);
+                        } => {
+                            let target = crate::native_controls::add_native_popover_color_dot(
+                                content_view,
+                                color,
+                                text.as_ref(),
+                                detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                on_click,
+                            );
+                            if !target.is_null() {
+                                button_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::ClickableRow {
-                        icon,
-                        text,
-                        detail,
-                        on_click,
-                        enabled,
-                        selected,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_clickable_row(
-                            content_view,
-                            icon.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            text.as_ref(),
-                            detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
+                        PlatformNativePopoverContentItem::ClickableRow {
+                            icon,
+                            text,
+                            detail,
+                            on_click,
                             enabled,
                             selected,
-                            on_click,
-                        );
-                        if !target.is_null() {
-                            hover_row_targets.push(target);
+                        } => {
+                            let target = crate::native_controls::add_native_popover_clickable_row(
+                                content_view,
+                                icon.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                text.as_ref(),
+                                detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                selected,
+                                on_click,
+                            );
+                            if !target.is_null() {
+                                hover_row_targets.push(target);
+                            }
+                        }
+                        PlatformNativePopoverContentItem::Separator => {
+                            crate::native_controls::add_native_popover_separator(
+                                content_view,
+                                padding,
+                                flipped_y + 5.0,
+                                content_width,
+                            );
                         }
                     }
-                    PlatformNativePopoverContentItem::Separator => {
-                        crate::native_controls::add_native_popover_separator(
-                            content_view,
-                            padding,
-                            flipped_y + 5.0,
-                            content_width,
-                        );
-                    }
-                }
 
                     top_y += height;
                 }
@@ -1742,7 +1761,11 @@ impl PlatformWindow for MacWindow {
                         PlatformNativePopoverContentItem::IconLabel { .. } => 24.0,
                         PlatformNativePopoverContentItem::Button { .. } => 32.0,
                         PlatformNativePopoverContentItem::Toggle { description, .. } => {
-                            if description.is_some() { 44.0 } else { 30.0 }
+                            if description.is_some() {
+                                44.0
+                            } else {
+                                30.0
+                            }
                         }
                         PlatformNativePopoverContentItem::Checkbox { .. } => 24.0,
                         PlatformNativePopoverContentItem::ProgressBar { label, .. } => {
@@ -1790,160 +1813,161 @@ impl PlatformWindow for MacWindow {
                     let flipped_y = total_content_height - top_y - height;
 
                     match item {
-                    PlatformNativePopoverContentItem::Label { text, bold } => {
-                        let font_size = if bold { 15.0 } else { 13.0 };
-                        let label_height = if bold { 22.0 } else { 18.0 };
-                        crate::native_controls::add_native_popover_label(
-                            doc_view,
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                            label_height,
-                            font_size,
-                            bold,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::SmallLabel { text } => {
-                        crate::native_controls::add_native_popover_small_label(
-                            doc_view,
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::IconLabel { icon, text } => {
-                        crate::native_controls::add_native_popover_icon_label(
-                            doc_view,
-                            icon.as_ref(),
-                            text.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::Button { title, on_click } => {
-                        let button = crate::native_controls::add_native_popover_button(
-                            doc_view,
-                            title.as_ref(),
-                            padding,
-                            flipped_y,
-                            content_width,
-                            28.0,
-                        );
-                        if let Some(callback) = on_click {
-                            let target =
-                                crate::native_controls::set_native_button_action(button, callback);
-                            button_targets.push(target);
+                        PlatformNativePopoverContentItem::Label { text, bold } => {
+                            let font_size = if bold { 15.0 } else { 13.0 };
+                            let label_height = if bold { 22.0 } else { 18.0 };
+                            crate::native_controls::add_native_popover_label(
+                                doc_view,
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                label_height,
+                                font_size,
+                                bold,
+                            );
                         }
-                    }
-                    PlatformNativePopoverContentItem::Toggle {
-                        text,
-                        checked,
-                        on_change,
-                        enabled,
-                        description,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_toggle(
-                            doc_view,
-                            text.as_ref(),
+                        PlatformNativePopoverContentItem::SmallLabel { text } => {
+                            crate::native_controls::add_native_popover_small_label(
+                                doc_view,
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::IconLabel { icon, text } => {
+                            crate::native_controls::add_native_popover_icon_label(
+                                doc_view,
+                                icon.as_ref(),
+                                text.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::Button { title, on_click } => {
+                            let button = crate::native_controls::add_native_popover_button(
+                                doc_view,
+                                title.as_ref(),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                28.0,
+                            );
+                            if let Some(callback) = on_click {
+                                let target = crate::native_controls::set_native_button_action(
+                                    button, callback,
+                                );
+                                button_targets.push(target);
+                            }
+                        }
+                        PlatformNativePopoverContentItem::Toggle {
+                            text,
                             checked,
-                            padding,
-                            flipped_y,
-                            content_width,
-                            enabled,
-                            description.as_ref().map(|s| AsRef::<str>::as_ref(s)),
                             on_change,
-                        );
-                        if !target.is_null() {
-                            switch_targets.push(target);
+                            enabled,
+                            description,
+                        } => {
+                            let target = crate::native_controls::add_native_popover_toggle(
+                                doc_view,
+                                text.as_ref(),
+                                checked,
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                description.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                on_change,
+                            );
+                            if !target.is_null() {
+                                switch_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::Checkbox {
-                        text,
-                        checked,
-                        on_change,
-                        enabled,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_checkbox(
-                            doc_view,
-                            text.as_ref(),
+                        PlatformNativePopoverContentItem::Checkbox {
+                            text,
                             checked,
-                            padding,
-                            flipped_y,
-                            content_width,
-                            enabled,
                             on_change,
-                        );
-                        if !target.is_null() {
-                            checkbox_targets.push(target);
+                            enabled,
+                        } => {
+                            let target = crate::native_controls::add_native_popover_checkbox(
+                                doc_view,
+                                text.as_ref(),
+                                checked,
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                on_change,
+                            );
+                            if !target.is_null() {
+                                checkbox_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::ProgressBar { value, max, label } => {
-                        crate::native_controls::add_native_popover_progress(
-                            doc_view,
-                            value,
-                            max,
-                            label.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
-                        );
-                    }
-                    PlatformNativePopoverContentItem::ColorDot {
-                        color,
-                        text,
-                        detail,
-                        on_click,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_color_dot(
-                            doc_view,
+                        PlatformNativePopoverContentItem::ProgressBar { value, max, label } => {
+                            crate::native_controls::add_native_popover_progress(
+                                doc_view,
+                                value,
+                                max,
+                                label.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                            );
+                        }
+                        PlatformNativePopoverContentItem::ColorDot {
                             color,
-                            text.as_ref(),
-                            detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
+                            text,
+                            detail,
                             on_click,
-                        );
-                        if !target.is_null() {
-                            button_targets.push(target);
+                        } => {
+                            let target = crate::native_controls::add_native_popover_color_dot(
+                                doc_view,
+                                color,
+                                text.as_ref(),
+                                detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                on_click,
+                            );
+                            if !target.is_null() {
+                                button_targets.push(target);
+                            }
                         }
-                    }
-                    PlatformNativePopoverContentItem::ClickableRow {
-                        icon,
-                        text,
-                        detail,
-                        on_click,
-                        enabled,
-                        selected,
-                    } => {
-                        let target = crate::native_controls::add_native_popover_clickable_row(
-                            doc_view,
-                            icon.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            text.as_ref(),
-                            detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
-                            padding,
-                            flipped_y,
-                            content_width,
+                        PlatformNativePopoverContentItem::ClickableRow {
+                            icon,
+                            text,
+                            detail,
+                            on_click,
                             enabled,
                             selected,
-                            on_click,
-                        );
-                        if !target.is_null() {
-                            hover_row_targets.push(target);
+                        } => {
+                            let target = crate::native_controls::add_native_popover_clickable_row(
+                                doc_view,
+                                icon.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                text.as_ref(),
+                                detail.as_ref().map(|s| AsRef::<str>::as_ref(s)),
+                                padding,
+                                flipped_y,
+                                content_width,
+                                enabled,
+                                selected,
+                                on_click,
+                            );
+                            if !target.is_null() {
+                                hover_row_targets.push(target);
+                            }
+                        }
+                        PlatformNativePopoverContentItem::Separator => {
+                            crate::native_controls::add_native_popover_separator(
+                                doc_view,
+                                padding,
+                                flipped_y + 5.0,
+                                content_width,
+                            );
                         }
                     }
-                    PlatformNativePopoverContentItem::Separator => {
-                        crate::native_controls::add_native_popover_separator(
-                            doc_view,
-                            padding,
-                            flipped_y + 5.0,
-                            content_width,
-                        );
-                    }
-                }
 
                     top_y += height;
                 }
@@ -2076,15 +2100,21 @@ impl PlatformWindow for MacWindow {
                 }
             });
             let block = block.copy();
-            let native_window = self.0.lock().native_window;
-            let executor = self.0.lock().foreground_executor.clone();
+            let lock = self.0.lock();
+            let native_window = lock.native_window;
+            let closed = lock.closed.clone();
+            let executor = lock.foreground_executor.clone();
             executor
                 .spawn(async move {
-                    let _: () = msg_send![
-                        alert,
-                        beginSheetModalForWindow: native_window
-                        completionHandler: block
-                    ];
+                    if !closed.load(Ordering::Acquire) {
+                        let _: () = msg_send![
+                            alert,
+                            beginSheetModalForWindow: native_window
+                            completionHandler: block
+                        ];
+                    } else {
+                        let _: () = msg_send![alert, release];
+                    }
                 })
                 .detach();
 
@@ -2291,13 +2321,15 @@ impl PlatformWindow for MacWindow {
     }
 
     fn activate(&self) {
-        let window = self.0.lock().native_window;
-        let executor = self.0.lock().foreground_executor.clone();
+        let lock = self.0.lock();
+        let window = lock.native_window;
+        let closed = lock.closed.clone();
+        let executor = lock.foreground_executor.clone();
         executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     let _: () = msg_send![window, makeKeyAndOrderFront: nil];
-                }
+                })
             })
             .detach();
     }
@@ -2434,11 +2466,12 @@ impl PlatformWindow for MacWindow {
     fn zoom(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.zoom_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -2446,11 +2479,12 @@ impl PlatformWindow for MacWindow {
     fn toggle_fullscreen(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
+                if_window_not_closed(closed, || unsafe {
                     window.toggleFullScreen_(nil);
-                }
+                })
             })
             .detach();
     }
@@ -2630,17 +2664,10 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().configuring_hosted_content = false;
     }
 
-    fn attach_hosted_surface(
-        &self,
-        host_view: *mut c_void,
-        surface_view: *mut c_void,
-    ) {
+    fn attach_hosted_surface(&self, host_view: *mut c_void, surface_view: *mut c_void) {
         self.0.as_ref().lock().configuring_hosted_content = true;
         unsafe {
-            crate::native_controls::embed_sidebar_surface_view(
-                host_view as id,
-                surface_view as id,
-            );
+            crate::native_controls::embed_sidebar_surface_view(host_view as id, surface_view as id);
         }
         self.0.as_ref().lock().configuring_hosted_content = false;
     }
@@ -2659,45 +2686,48 @@ impl PlatformWindow for MacWindow {
     fn titlebar_double_click(&self) {
         let this = self.0.lock();
         let window = this.native_window;
+        let closed = this.closed.clone();
         this.foreground_executor
             .spawn(async move {
-                unsafe {
-                    let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = ns_string("NSGlobalDomain");
-                    let key = ns_string("AppleActionOnDoubleClick");
+                if_window_not_closed(closed, || {
+                    unsafe {
+                        let defaults: id = NSUserDefaults::standardUserDefaults();
+                        let domain = ns_string("NSGlobalDomain");
+                        let key = ns_string("AppleActionOnDoubleClick");
 
-                    let dict: id = msg_send![defaults, persistentDomainForName: domain];
-                    let action: id = if !dict.is_null() {
-                        msg_send![dict, objectForKey: key]
-                    } else {
-                        nil
-                    };
+                        let dict: id = msg_send![defaults, persistentDomainForName: domain];
+                        let action: id = if !dict.is_null() {
+                            msg_send![dict, objectForKey: key]
+                        } else {
+                            nil
+                        };
 
-                    let action_str = if !action.is_null() {
-                        CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
-                    } else {
-                        "".into()
-                    };
+                        let action_str = if !action.is_null() {
+                            CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
+                        } else {
+                            "".into()
+                        };
 
-                    match action_str.as_ref() {
-                        "None" => {
-                            // "Do Nothing" selected, so do no action
-                        }
-                        "Minimize" => {
-                            window.miniaturize_(nil);
-                        }
-                        "Maximize" => {
-                            window.zoom_(nil);
-                        }
-                        "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            window.zoom_(nil);
-                        }
-                        _ => {
-                            window.zoom_(nil);
+                        match action_str.as_ref() {
+                            "None" => {
+                                // "Do Nothing" selected, so do no action
+                            }
+                            "Minimize" => {
+                                window.miniaturize_(nil);
+                            }
+                            "Maximize" => {
+                                window.zoom_(nil);
+                            }
+                            "Fill" => {
+                                // There is no documented API for "Fill" action, so we'll just zoom the window
+                                window.zoom_(nil);
+                            }
+                            _ => {
+                                window.zoom_(nil);
+                            }
                         }
                     }
-                }
+                })
             })
             .detach();
     }
@@ -2826,8 +2856,7 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         // while the user is typing.
         let window_state = unsafe { get_window_state(this) };
         let window_height = window_state.as_ref().lock().content_size().height;
-        let event =
-            unsafe { platform_input_from_native(native_event, Some(window_height), None) };
+        let event = unsafe { platform_input_from_native(native_event, Some(window_height), None) };
 
         if let Some(PlatformInput::KeyDown(key_down_event)) = event {
             let ks = &key_down_event.keystroke;
@@ -3381,6 +3410,7 @@ extern "C" fn close_window(this: &Object, _: Sel) {
         let close_callback = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
+            lock.closed.store(true, Ordering::Release);
             lock.close_callback.take()
         };
 
@@ -3419,7 +3449,6 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     if old_size == new_size {
         return;
     }
-
 
     unsafe {
         let _: () = msg_send![super(this, class!(NSView)), setFrameSize: size];
@@ -4286,20 +4315,16 @@ unsafe fn load_toolbar_image_from_url(toolbar_item: id, url_str: &str, circular:
         let block = ConcreteBlock::new(move |data: id, _response: id, error: id| {
             if error != nil || data == nil {
                 // Release on main thread since NSToolbarItem isn't thread-safe
-                DispatchQueue::main().exec_async_f(
-                    toolbar_item as *mut c_void,
-                    release_toolbar_item_on_main,
-                );
+                DispatchQueue::main()
+                    .exec_async_f(toolbar_item as *mut c_void, release_toolbar_item_on_main);
                 return;
             }
 
             let image: id = msg_send![class!(NSImage), alloc];
             let image: id = msg_send![image, initWithData: data];
             if image == nil {
-                DispatchQueue::main().exec_async_f(
-                    toolbar_item as *mut c_void,
-                    release_toolbar_item_on_main,
-                );
+                DispatchQueue::main()
+                    .exec_async_f(toolbar_item as *mut c_void, release_toolbar_item_on_main);
                 return;
             }
 
@@ -4348,10 +4373,8 @@ unsafe fn load_toolbar_image_from_url(toolbar_item: id, url_str: &str, circular:
                 toolbar_item,
                 image: final_image,
             });
-            DispatchQueue::main().exec_async_f(
-                Box::into_raw(ctx) as *mut c_void,
-                set_toolbar_image_on_main,
-            );
+            DispatchQueue::main()
+                .exec_async_f(Box::into_raw(ctx) as *mut c_void, set_toolbar_image_on_main);
         });
         let block = block.copy();
 
