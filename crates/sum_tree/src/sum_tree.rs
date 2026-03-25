@@ -396,7 +396,6 @@ impl<T: Item> SumTree<T> {
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`.
     ///
     /// Only returns the item that exactly has the target match.
-    #[instrument(skip_all)]
     pub fn find_exact<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,
@@ -422,7 +421,6 @@ impl<T: Item> SumTree<T> {
     }
 
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
-    #[instrument(skip_all)]
     pub fn find<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,
@@ -507,7 +505,6 @@ impl<T: Item> SumTree<T> {
     }
 
     /// A more efficient version of `Cursor::new()` + `Cursor::seek()` + `Cursor::item()`
-    #[instrument(skip_all)]
     pub fn find_with_prev<'a, 'slf, D, Target>(
         &'slf self,
         cx: <T::Summary as Summary>::Context<'a>,
