@@ -324,7 +324,7 @@ pub(crate) unsafe fn is_native_panel_visible(panel: id) -> bool {
     }
 }
 
-/// Gets the screen frame of a toolbar item by its identifier.
+/// Gets the content-view-local frame of a toolbar item by its identifier.
 /// Returns None if the toolbar or item is not found.
 pub(crate) unsafe fn get_toolbar_item_screen_frame(
     window: id,
@@ -361,8 +361,21 @@ pub(crate) unsafe fn get_toolbar_item_screen_frame(
                 if view_window == nil {
                     return None;
                 }
-                let screen_rect: NSRect = msg_send![view_window, convertRectToScreen: window_rect];
-                return Some(screen_rect);
+                let content_view: id = msg_send![view_window, contentView];
+                if content_view == nil {
+                    return None;
+                }
+                let content_rect: NSRect =
+                    msg_send![content_view, convertRect: window_rect fromView: nil];
+                let content_bounds: NSRect = msg_send![content_view, bounds];
+                let flipped_rect = NSRect::new(
+                    NSPoint::new(
+                        content_rect.origin.x,
+                        content_bounds.size.height - content_rect.origin.y - content_rect.size.height,
+                    ),
+                    content_rect.size,
+                );
+                return Some(flipped_rect);
             }
         }
 

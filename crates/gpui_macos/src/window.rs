@@ -457,7 +457,7 @@ enum ToolbarNativeResource {
     SegmentedControl { control: id, target: *mut c_void },
     PopUpButton { popup: id, target: *mut c_void },
     ComboBox { combo: id, delegate: *mut c_void },
-    MenuButton { target: *mut c_void },
+    MenuButton { button: Option<id>, target: *mut c_void },
 }
 
 struct ToolbarState {
@@ -517,8 +517,11 @@ impl MacToolbarState {
                         crate::native_controls::release_native_combo_box_delegate(delegate);
                         crate::native_controls::release_native_combo_box(combo);
                     }
-                    ToolbarNativeResource::MenuButton { target } => {
+                    ToolbarNativeResource::MenuButton { button, target } => {
                         crate::native_controls::release_native_menu_button_target(target);
+                        if let Some(button) = button {
+                            crate::native_controls::release_native_menu_button(button);
+                        }
                     }
                 }
             }
@@ -2633,6 +2636,10 @@ impl PlatformWindow for MacWindow {
         self.0.lock().native_view.as_ptr() as *mut c_void
     }
 
+    fn raw_native_window_ptr(&self) -> *mut c_void {
+        self.0.lock().native_window as *mut c_void
+    }
+
     fn native_controls(&self) -> Option<&dyn gpui::native_controls::PlatformNativeControls> {
         Some(&MAC_NATIVE_CONTROLS)
     }
@@ -4400,10 +4407,16 @@ unsafe fn create_toolbar_button_item(
         let icon = item.icon.clone();
         let image_url = item.image_url.clone();
         let image_circular = item.image_circular;
+        let hosted_surface_view = item.hosted_surface_view;
 
         let toolbar_item: id = msg_send![class!(NSToolbarItem), alloc];
         let toolbar_item: id = msg_send![toolbar_item, initWithItemIdentifier: identifier];
-        let button = crate::native_controls::create_native_button(label.as_ref());
+        let button_title = if hosted_surface_view.is_some() {
+            ""
+        } else {
+            label.as_ref()
+        };
+        let button = crate::native_controls::create_native_button(button_title);
 
         let state_ptr: *mut c_void = *this.get_ivar(TOOLBAR_STATE_IVAR);
         let callback_identifier = identifier_string.to_owned();
@@ -4421,33 +4434,74 @@ unsafe fn create_toolbar_button_item(
             crate::native_controls::set_native_view_tooltip(button, tool_tip.as_ref());
         }
 
-        // Set SF Symbol icon on both the toolbar item and the button view.
-        // The toolbar item image is used by the customization panel,
-        // while the button image is what's actually displayed (since setView: overrides).
-        if let Some(icon) = icon.as_ref() {
-            let symbol_name = ns_string(icon.as_ref());
-            let image: id = msg_send![
-                class!(NSImage),
-                imageWithSystemSymbolName: symbol_name
-                accessibilityDescription: nil
-            ];
-            if image != nil {
-                let _: () = msg_send![toolbar_item, setImage: image];
-            }
-            let image_only = label.is_empty();
-            crate::native_controls::set_native_button_sf_symbol(button, icon.as_ref(), image_only);
-        }
+        let host_view = if let Some(surface_view) = hosted_surface_view {
+            let surface_view = surface_view as id;
+            crate::native_controls::set_native_button_bezel_style(button, 12);
+            crate::native_controls::set_native_button_bordered(button, false);
+            crate::native_controls::set_native_button_shows_border_on_hover(button, false);
 
-        // Load image from URL asynchronously if provided
-        if let Some(url_str) = image_url.as_ref() {
-            load_toolbar_image_from_url(toolbar_item, url_str, image_circular);
+            let mut size: NSSize = if label.is_empty() {
+                msg_send![button, fittingSize]
+            } else {
+                let sizing_button = crate::native_controls::create_native_button(label.as_ref());
+                let size: NSSize = msg_send![sizing_button, fittingSize];
+                crate::native_controls::release_native_button(sizing_button);
+                size
+            };
+            size.width += 22.0;
+            let frame = NSRect::new(NSPoint::new(0.0, 0.0), size);
+
+            let container: id = msg_send![class!(NSView), alloc];
+            let container: id = msg_send![container, initWithFrame: frame];
+            let _: () = msg_send![container, setAutoresizingMask: 0u64];
+
+            let _: () = msg_send![surface_view, setFrame: frame];
+            let _: () = msg_send![surface_view, setAutoresizingMask: 18u64];
+            let _: () = msg_send![container, addSubview: surface_view];
+            let layer: id = msg_send![surface_view, layer];
+            if layer != nil {
+                let _: () = msg_send![layer, setOpaque: 0i8];
+            }
+
+            let _: () = msg_send![button, setFrame: frame];
+            let _: () = msg_send![button, setAutoresizingMask: 18u64];
+            let _: () = msg_send![container, addSubview: button];
+
+            let _: () = msg_send![container, autorelease];
+            container
+        } else {
+            if let Some(icon) = icon.as_ref() {
+                let symbol_name = ns_string(icon.as_ref());
+                let image: id = msg_send![
+                    class!(NSImage),
+                    imageWithSystemSymbolName: symbol_name
+                    accessibilityDescription: nil
+                ];
+                if image != nil {
+                    let _: () = msg_send![toolbar_item, setImage: image];
+                }
+                let image_only = label.is_empty();
+                crate::native_controls::set_native_button_sf_symbol(
+                    button,
+                    icon.as_ref(),
+                    image_only,
+                );
+            }
+
+            button
+        };
+
+        if hosted_surface_view.is_none() {
+            if let Some(url_str) = image_url.as_ref() {
+                load_toolbar_image_from_url(toolbar_item, url_str, image_circular);
+            }
         }
 
         let _: () = msg_send![toolbar_item, setLabel: ns_string(label.as_ref())];
-        let size: NSSize = msg_send![button, fittingSize];
+        let size: NSSize = msg_send![host_view, fittingSize];
         let _: () = msg_send![toolbar_item, setMinSize: size];
         let _: () = msg_send![toolbar_item, setMaxSize: size];
-        let _: () = msg_send![toolbar_item, setView: button];
+        let _: () = msg_send![toolbar_item, setView: host_view];
 
         state
             .resources
@@ -4842,11 +4896,9 @@ unsafe fn create_toolbar_menu_button_item(
         let icon = item.icon.clone();
         let image_url = item.image_url.clone();
         let image_circular = item.image_circular;
+        let hosted_surface_view = item.hosted_surface_view;
         let shows_indicator = item.shows_indicator;
         let native_menu_items = convert_platform_menu_items_to_native(&item.items);
-
-        let toolbar_item: id = msg_send![class!(NSMenuToolbarItem), alloc];
-        let toolbar_item: id = msg_send![toolbar_item, initWithItemIdentifier: identifier];
 
         let state_ptr: *mut c_void = *this.get_ivar(TOOLBAR_STATE_IVAR);
         let callback_identifier = identifier_string.to_owned();
@@ -4861,37 +4913,107 @@ unsafe fn create_toolbar_menu_button_item(
             }
         }));
 
-        let (menu, target_ptr) =
-            crate::native_controls::create_native_menu_target(&native_menu_items, on_select);
+        if let Some(surface_view) = hosted_surface_view {
+            let toolbar_item: id = msg_send![class!(NSToolbarItem), alloc];
+            let toolbar_item: id = msg_send![toolbar_item, initWithItemIdentifier: identifier];
 
-        let _: () = msg_send![toolbar_item, setMenu: menu];
-        // Release our extra retain - NSMenuToolbarItem retains the menu internally
-        let _: () = msg_send![menu, release];
+            let button = crate::native_controls::create_native_menu_button("");
+            crate::native_controls::set_native_button_bezel_style(button, 12);
+            crate::native_controls::set_native_button_bordered(button, false);
+            crate::native_controls::set_native_button_shows_border_on_hover(button, false);
+            let target_ptr = crate::native_controls::set_native_menu_button_items(
+                button,
+                &native_menu_items,
+                on_select,
+            );
 
-        let _: () = msg_send![toolbar_item, setLabel: ns_string(label.as_ref())];
-        let _: () = msg_send![toolbar_item, setShowsIndicator: shows_indicator as BOOL];
-
-        if let Some(tool_tip) = tool_tip.as_ref() {
-            let _: () = msg_send![toolbar_item, setToolTip: ns_string(tool_tip.as_ref())];
-        }
-
-        if let Some(icon) = icon.as_ref() {
-            let symbol_name = ns_string(icon.as_ref());
-            let image: id = msg_send![class!(NSImage), imageWithSystemSymbolName: symbol_name accessibilityDescription: nil];
-            if image != nil {
-                let _: () = msg_send![toolbar_item, setImage: image];
+            if let Some(tool_tip) = tool_tip.as_ref() {
+                crate::native_controls::set_native_view_tooltip(button, tool_tip.as_ref());
             }
+
+            let surface_view = surface_view as id;
+            let mut size: NSSize = if label.is_empty() {
+                msg_send![button, fittingSize]
+            } else {
+                let sizing_button =
+                    crate::native_controls::create_native_menu_button(label.as_ref());
+                let size: NSSize = msg_send![sizing_button, fittingSize];
+                crate::native_controls::release_native_menu_button(sizing_button);
+                size
+            };
+            size.width += 28.0;
+            let frame = NSRect::new(NSPoint::new(0.0, 0.0), size);
+
+            let container: id = msg_send![class!(NSView), alloc];
+            let container: id = msg_send![container, initWithFrame: frame];
+            let _: () = msg_send![container, setAutoresizingMask: 0u64];
+
+            let _: () = msg_send![surface_view, setFrame: frame];
+            let _: () = msg_send![surface_view, setAutoresizingMask: 18u64];
+            let _: () = msg_send![container, addSubview: surface_view];
+            let layer: id = msg_send![surface_view, layer];
+            if layer != nil {
+                let _: () = msg_send![layer, setOpaque: 0i8];
+            }
+
+            let _: () = msg_send![button, setFrame: frame];
+            let _: () = msg_send![button, setAutoresizingMask: 18u64];
+            let _: () = msg_send![container, addSubview: button];
+
+            let _: () = msg_send![toolbar_item, setLabel: ns_string(label.as_ref())];
+            let fitted_size: NSSize = msg_send![container, fittingSize];
+            let _: () = msg_send![toolbar_item, setMinSize: fitted_size];
+            let _: () = msg_send![toolbar_item, setMaxSize: fitted_size];
+            let _: () = msg_send![toolbar_item, setView: container];
+            let _: () = msg_send![container, autorelease];
+
+            state.resources.push(ToolbarNativeResource::MenuButton {
+                button: Some(button),
+                target: target_ptr,
+            });
+
+            msg_send![toolbar_item, autorelease]
+        } else {
+            let toolbar_item: id = msg_send![class!(NSMenuToolbarItem), alloc];
+            let toolbar_item: id = msg_send![toolbar_item, initWithItemIdentifier: identifier];
+
+            let (menu, target_ptr) =
+                crate::native_controls::create_native_menu_target(&native_menu_items, on_select);
+
+            let _: () = msg_send![toolbar_item, setMenu: menu];
+            // Release our extra retain - NSMenuToolbarItem retains the menu internally
+            let _: () = msg_send![menu, release];
+
+            let _: () = msg_send![toolbar_item, setLabel: ns_string(label.as_ref())];
+            let _: () = msg_send![toolbar_item, setShowsIndicator: shows_indicator as BOOL];
+
+            if let Some(tool_tip) = tool_tip.as_ref() {
+                let _: () = msg_send![toolbar_item, setToolTip: ns_string(tool_tip.as_ref())];
+            }
+
+            if let Some(icon) = icon.as_ref() {
+                let symbol_name = ns_string(icon.as_ref());
+                let image: id = msg_send![
+                    class!(NSImage),
+                    imageWithSystemSymbolName: symbol_name
+                    accessibilityDescription: nil
+                ];
+                if image != nil {
+                    let _: () = msg_send![toolbar_item, setImage: image];
+                }
+            }
+
+            if let Some(url_str) = image_url.as_ref() {
+                load_toolbar_image_from_url(toolbar_item, url_str, image_circular);
+            }
+
+            state.resources.push(ToolbarNativeResource::MenuButton {
+                button: None,
+                target: target_ptr,
+            });
+
+            msg_send![toolbar_item, autorelease]
         }
-
-        if let Some(url_str) = image_url.as_ref() {
-            load_toolbar_image_from_url(toolbar_item, url_str, image_circular);
-        }
-
-        state
-            .resources
-            .push(ToolbarNativeResource::MenuButton { target: target_ptr });
-
-        msg_send![toolbar_item, autorelease]
     }
 }
 

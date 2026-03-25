@@ -711,6 +711,7 @@ pub struct NativeToolbarButton {
     icon: Option<SharedString>,
     image_url: Option<SharedString>,
     image_circular: bool,
+    hosted_view: Option<AnyView>,
     on_click: Option<Box<dyn Fn(&NativeToolbarClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -724,6 +725,7 @@ impl NativeToolbarButton {
             icon: None,
             image_url: None,
             image_circular: false,
+            hosted_view: None,
             on_click: None,
         }
     }
@@ -750,6 +752,15 @@ impl NativeToolbarButton {
     /// When true, the loaded image is clipped to a circle (for avatars).
     pub fn image_circular(mut self, circular: bool) -> Self {
         self.image_circular = circular;
+        self
+    }
+
+    /// Replaces the native icon/image with GPUI-rendered visual content while
+    /// preserving the native toolbar button's interaction behavior.
+    pub fn content_view<V: Render>(mut self, view: Entity<V>) -> Self {
+        self.hosted_view = Some(AnyView::from(view));
+        self.icon = None;
+        self.image_url = None;
         self
     }
 
@@ -1179,6 +1190,7 @@ pub struct NativeToolbarMenuButton {
     icon: Option<SharedString>,
     image_url: Option<SharedString>,
     image_circular: bool,
+    hosted_view: Option<AnyView>,
     shows_indicator: bool,
     items: Vec<NativeToolbarMenuItem>,
     on_select:
@@ -1199,6 +1211,7 @@ impl NativeToolbarMenuButton {
             icon: None,
             image_url: None,
             image_circular: false,
+            hosted_view: None,
             shows_indicator: true,
             items,
             on_select: None,
@@ -1227,6 +1240,15 @@ impl NativeToolbarMenuButton {
     /// When true, the loaded image is clipped to a circle (for avatars).
     pub fn image_circular(mut self, circular: bool) -> Self {
         self.image_circular = circular;
+        self
+    }
+
+    /// Replaces the native icon/image with GPUI-rendered visual content while
+    /// preserving the native toolbar menu button's interaction behavior.
+    pub fn content_view<V: Render>(mut self, view: Entity<V>) -> Self {
+        self.hosted_view = Some(AnyView::from(view));
+        self.icon = None;
+        self.image_url = None;
         self
     }
 
@@ -1354,6 +1376,11 @@ pub struct NativeToolbar {
     items: Vec<NativeToolbarItem>,
 }
 
+struct NativeToolbarHostedSurface {
+    item_id: SharedString,
+    view: AnyView,
+}
+
 impl NativeToolbar {
     /// Creates a toolbar configuration with a stable identifier.
     pub fn new(identifier: impl Into<SharedString>) -> Self {
@@ -1407,7 +1434,8 @@ impl NativeToolbar {
         self,
         next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
         invalidator: WindowInvalidator,
-    ) -> PlatformNativeToolbar {
+    ) -> (PlatformNativeToolbar, Vec<NativeToolbarHostedSurface>) {
+        let mut hosted_surfaces = Vec::new();
         let items = self
             .items
             .into_iter()
@@ -1425,6 +1453,13 @@ impl NativeToolbar {
                         )
                     });
 
+                    if let Some(hosted_view) = button.hosted_view {
+                        hosted_surfaces.push(NativeToolbarHostedSurface {
+                            item_id: button.id.clone(),
+                            view: hosted_view,
+                        });
+                    }
+
                     PlatformNativeToolbarItem::Button(PlatformNativeToolbarButtonItem {
                         id: button.id,
                         label: button.label,
@@ -1432,6 +1467,7 @@ impl NativeToolbar {
                         icon: button.icon,
                         image_url: button.image_url,
                         image_circular: button.image_circular,
+                        hosted_surface_view: None,
                         on_click,
                     })
                 }
@@ -1651,6 +1687,13 @@ impl NativeToolbar {
                     })
                 }
                 NativeToolbarItem::MenuButton(menu_button) => {
+                    if let Some(hosted_view) = menu_button.hosted_view {
+                        hosted_surfaces.push(NativeToolbarHostedSurface {
+                            item_id: menu_button.id.clone(),
+                            view: hosted_view,
+                        });
+                    }
+
                     let btn_id = menu_button.id.clone();
                     let on_select = menu_button.on_select.map(|handler| {
                         schedule_native_toolbar_callback(
@@ -1671,6 +1714,7 @@ impl NativeToolbar {
                         icon: menu_button.icon,
                         image_url: menu_button.image_url,
                         image_circular: menu_button.image_circular,
+                        hosted_surface_view: None,
                         shows_indicator: menu_button.shows_indicator,
                         items: convert_toolbar_menu_items(&menu_button.items),
                         on_select,
@@ -1686,14 +1730,17 @@ impl NativeToolbar {
             })
             .collect();
 
-        PlatformNativeToolbar {
-            identifier: self.identifier,
-            title: self.title,
-            display_mode: self.display_mode.into(),
-            size_mode: self.size_mode.into(),
-            shows_baseline_separator: self.shows_baseline_separator,
-            items,
-        }
+        (
+            PlatformNativeToolbar {
+                identifier: self.identifier,
+                title: self.title,
+                display_mode: self.display_mode.into(),
+                size_mode: self.size_mode.into(),
+                shows_baseline_separator: self.shows_baseline_separator,
+                items,
+            },
+            hosted_surfaces,
+        )
     }
 }
 
@@ -3269,6 +3316,8 @@ pub struct Window {
     active_popover_surface: Option<SurfaceId>,
     #[cfg(target_os = "macos")]
     active_panel_surface: Option<SurfaceId>,
+    #[cfg(target_os = "macos")]
+    active_toolbar_surfaces: Vec<SurfaceId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -3798,6 +3847,8 @@ impl Window {
             active_popover_surface: None,
             #[cfg(target_os = "macos")]
             active_panel_surface: None,
+            #[cfg(target_os = "macos")]
+            active_toolbar_surfaces: Vec::new(),
         })
     }
 
@@ -4426,6 +4477,14 @@ impl Window {
     }
 
     #[cfg(target_os = "macos")]
+    fn clear_hosted_toolbar_surfaces(&mut self) {
+        let surface_ids: Vec<_> = self.active_toolbar_surfaces.drain(..).collect();
+        for surface_id in surface_ids {
+            self.unregister_surface(surface_id);
+        }
+    }
+
+    #[cfg(target_os = "macos")]
     fn prepare_hosted_surface(
         &mut self,
         slot: HostedSurfaceSlot,
@@ -4485,8 +4544,47 @@ impl Window {
     /// On macOS this installs an `NSToolbar` with native items.
     /// On other platforms this is currently a no-op.
     pub fn set_native_toolbar(&mut self, toolbar: Option<NativeToolbar>) {
+        #[cfg(target_os = "macos")]
+        self.clear_hosted_toolbar_surfaces();
+
         let toolbar = toolbar.map(|toolbar| {
-            toolbar.into_platform(self.next_frame_callbacks.clone(), self.invalidator.clone())
+            let (mut platform_toolbar, hosted_surfaces) =
+                toolbar.into_platform(self.next_frame_callbacks.clone(), self.invalidator.clone());
+
+            #[cfg(target_os = "macos")]
+            for hosted_surface in hosted_surfaces {
+                let handle = self.register_surface(hosted_surface.view);
+                self.active_toolbar_surfaces.push(handle.id);
+
+                if let Some(PlatformNativeToolbarItem::Button(button_item)) = platform_toolbar
+                    .items
+                    .iter_mut()
+                    .find(|item| {
+                        matches!(
+                            item,
+                            PlatformNativeToolbarItem::Button(button_item)
+                                if button_item.id == hosted_surface.item_id
+                        )
+                    })
+                {
+                    button_item.hosted_surface_view = Some(handle.native_view_ptr);
+                } else if let Some(PlatformNativeToolbarItem::MenuButton(menu_button_item)) =
+                    platform_toolbar.items.iter_mut().find(|item| {
+                        matches!(
+                            item,
+                            PlatformNativeToolbarItem::MenuButton(menu_button_item)
+                                if menu_button_item.id == hosted_surface.item_id
+                        )
+                    })
+                {
+                    menu_button_item.hosted_surface_view = Some(handle.native_view_ptr);
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = hosted_surfaces;
+
+            platform_toolbar
         });
         self.platform_window.set_native_toolbar(toolbar);
     }
@@ -4642,6 +4740,23 @@ impl Window {
         } else {
             self.platform_window.raw_native_view_ptr()
         }
+    }
+
+    /// Returns the bounds of a native toolbar item in window coordinates.
+    ///
+    /// On macOS this resolves the installed `NSToolbarItem` by identifier and
+    /// returns its current frame in the content-view-local coordinate space. On
+    /// unsupported platforms this returns `None`.
+    pub fn native_toolbar_item_bounds(&self, item_id: &str) -> Option<Bounds<Pixels>> {
+        self.platform_window
+            .native_controls()
+            .and_then(|native_controls| {
+                let native_window = self.platform_window.raw_native_window_ptr();
+                if native_window.is_null() {
+                    return None;
+                }
+                native_controls.get_toolbar_item_frame(native_window, item_id)
+            })
     }
 
     /// Returns the platform's native controls implementation for creating

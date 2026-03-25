@@ -647,6 +647,7 @@ pub struct PlatformNativeToolbarButtonItem {
     pub icon: Option<SharedString>,
     pub image_url: Option<SharedString>,
     pub image_circular: bool,
+    pub hosted_surface_view: Option<*mut std::ffi::c_void>,
     pub on_click: Option<Box<dyn Fn()>>,
 }
 
@@ -711,6 +712,7 @@ pub struct PlatformNativeToolbarMenuButtonItem {
     pub icon: Option<SharedString>,
     pub image_url: Option<SharedString>,
     pub image_circular: bool,
+    pub hosted_surface_view: Option<*mut std::ffi::c_void>,
     pub shows_indicator: bool,
     pub items: Vec<PlatformNativeToolbarMenuItemData>,
     pub on_select: Option<Box<dyn Fn(usize)>>,
@@ -1064,6 +1066,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn dismiss_sheet(&self) {}
 
     fn raw_native_view_ptr(&self) -> *mut std::ffi::c_void {
+        std::ptr::null_mut()
+    }
+
+    fn raw_native_window_ptr(&self) -> *mut std::ffi::c_void {
         std::ptr::null_mut()
     }
 
