@@ -1,412 +1,583 @@
 /// Native Search Suggestions Example
 ///
-/// Production-ready search suggestion panel using NSPanel anchored below a
-/// toolbar search field. Features:
-/// - Filter-as-you-type with categorized results (bookmarks, history, web search)
-/// - Hover highlight on rows
-/// - Keyboard navigation (up/down arrows, enter to select, escape to dismiss)
-/// - Auto-dismiss when a suggestion is selected or the panel loses focus
-/// - Adaptive dark/light appearance
-/// - SF Symbol icons per category
+/// Demonstrates a browser-style search experience with:
+/// - `NSSearchToolbarItem` in the title bar
+/// - `NSSearchField` in content for a new-tab-style search box
+/// - a native search suggestion menu anchored to either search field
+/// - keyboard navigation that stays on the search field instead of moving focus
 use gpui::{
-    App, Bounds, Context, NativePanel, NativePanelAnchor, NativePanelLevel, NativePanelMaterial,
-    NativePanelStyle, NativePopoverClickableRow, NativePopoverContentItem, NativeToolbar,
-    NativeToolbarButton, NativeToolbarClickEvent, NativeToolbarDisplayMode, NativeToolbarItem,
-    NativeToolbarSearchEvent, NativeToolbarSearchField, NativeToolbarSizeMode, Window,
-    WindowAppearance, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, Entity, NativeSearchFieldTarget, NativeSearchSuggestionMenu,
+    NativeToolbar, NativeToolbarButton, NativeToolbarClickEvent, NativeToolbarDisplayMode,
+    NativeToolbarItem, NativeToolbarSearchEvent, NativeToolbarSearchField, SearchChangeEvent,
+    SearchSubmitEvent, StatefulInteractiveElement, Styled, WeakEntity, Window, WindowAppearance,
+    WindowBounds, WindowOptions, div, native_search_field, prelude::*, px, rgb, rgba, size,
 };
 
-// ── Suggestion data ─────────────────────────────────────────────────────────
+const TOOLBAR_SEARCH_ID: &str = "search.demo.toolbar";
+const CONTENT_SEARCH_ID: &str = "search.demo.content";
+const MENU_WIDTH: f64 = 460.0;
+const MENU_MIN_HEIGHT: f64 = 148.0;
+const MENU_MAX_HEIGHT: f64 = 348.0;
+const ROW_HEIGHT: f64 = 48.0;
+const HEADER_HEIGHT: f64 = 36.0;
+const MENU_PADDING: f64 = 12.0;
 
-#[derive(Clone)]
-struct Suggestion {
-    icon: &'static str,
-    title: &'static str,
-    detail: Option<&'static str>,
-    url: &'static str,
-    category: Category,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchAnchor {
+    Toolbar,
+    Content,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Category {
+impl SearchAnchor {
+    fn title(self) -> &'static str {
+        match self {
+            SearchAnchor::Toolbar => "Toolbar Search",
+            SearchAnchor::Content => "New Tab Search",
+        }
+    }
+
+    fn target(self) -> NativeSearchFieldTarget {
+        match self {
+            SearchAnchor::Toolbar => NativeSearchFieldTarget::ToolbarItem(TOOLBAR_SEARCH_ID.into()),
+            SearchAnchor::Content => {
+                NativeSearchFieldTarget::ContentElement(CONTENT_SEARCH_ID.into())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SuggestionKind {
+    Search,
+    TopHit,
     Bookmark,
     History,
-    TopHit,
 }
 
-const SUGGESTIONS: &[Suggestion] = &[
-    Suggestion {
-        icon: "star.fill",
-        title: "GitHub",
-        detail: Some("github.com"),
-        url: "https://github.com",
-        category: Category::Bookmark,
+impl SuggestionKind {
+    fn badge(self) -> &'static str {
+        match self {
+            SuggestionKind::Search => "Search",
+            SuggestionKind::TopHit => "Top Hit",
+            SuggestionKind::Bookmark => "Bookmark",
+            SuggestionKind::History => "History",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SuggestionRow {
+    kind: SuggestionKind,
+    title: String,
+    detail: String,
+    url: String,
+}
+
+#[derive(Clone, Copy)]
+struct DemoSuggestion {
+    kind: SuggestionKind,
+    title: &'static str,
+    detail: &'static str,
+    url: &'static str,
+}
+
+const SUGGESTIONS: &[DemoSuggestion] = &[
+    DemoSuggestion {
+        kind: SuggestionKind::TopHit,
+        title: "Glass Browser",
+        detail: "glass.dev",
+        url: "https://glass.dev",
     },
-    Suggestion {
-        icon: "star.fill",
-        title: "Stack Overflow",
-        detail: Some("stackoverflow.com"),
-        url: "https://stackoverflow.com",
-        category: Category::Bookmark,
-    },
-    Suggestion {
-        icon: "star.fill",
-        title: "Rust Docs",
-        detail: Some("doc.rust-lang.org"),
-        url: "https://doc.rust-lang.org",
-        category: Category::Bookmark,
-    },
-    Suggestion {
-        icon: "star.fill",
-        title: "crates.io",
-        detail: Some("crates.io"),
-        url: "https://crates.io",
-        category: Category::Bookmark,
-    },
-    Suggestion {
-        icon: "star.fill",
-        title: "Apple Developer",
-        detail: Some("developer.apple.com"),
-        url: "https://developer.apple.com",
-        category: Category::Bookmark,
-    },
-    Suggestion {
-        icon: "clock",
-        title: "Rust async/await tutorial",
-        detail: Some("blog.rust-lang.org"),
-        url: "https://blog.rust-lang.org/async-await",
-        category: Category::History,
-    },
-    Suggestion {
-        icon: "clock",
-        title: "NSPanel documentation",
-        detail: Some("developer.apple.com"),
-        url: "https://developer.apple.com/documentation/appkit/nspanel",
-        category: Category::History,
-    },
-    Suggestion {
-        icon: "clock",
-        title: "GPUI framework",
-        detail: Some("gpui.rs"),
+    DemoSuggestion {
+        kind: SuggestionKind::TopHit,
+        title: "GPUI Documentation",
+        detail: "gpui.rs",
         url: "https://gpui.rs",
-        category: Category::History,
     },
-    Suggestion {
-        icon: "clock",
-        title: "Zed editor",
-        detail: Some("zed.dev"),
-        url: "https://zed.dev",
-        category: Category::History,
+    DemoSuggestion {
+        kind: SuggestionKind::Bookmark,
+        title: "Apple Developer",
+        detail: "developer.apple.com",
+        url: "https://developer.apple.com",
     },
-    Suggestion {
-        icon: "clock",
-        title: "Tauri app framework",
-        detail: Some("tauri.app"),
-        url: "https://tauri.app",
-        category: Category::History,
+    DemoSuggestion {
+        kind: SuggestionKind::Bookmark,
+        title: "Rust Standard Library",
+        detail: "doc.rust-lang.org/std",
+        url: "https://doc.rust-lang.org/std/",
     },
-    Suggestion {
-        icon: "globe",
-        title: "Rust Programming Language",
-        detail: Some("rust-lang.org"),
-        url: "https://www.rust-lang.org",
-        category: Category::TopHit,
+    DemoSuggestion {
+        kind: SuggestionKind::History,
+        title: "Liquid Glass Adoption Guide",
+        detail: "developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass",
+        url: "https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass",
     },
-    Suggestion {
-        icon: "globe",
-        title: "The Rust Book",
-        detail: Some("doc.rust-lang.org/book"),
-        url: "https://doc.rust-lang.org/book/",
-        category: Category::TopHit,
+    DemoSuggestion {
+        kind: SuggestionKind::History,
+        title: "NSSearchToolbarItem",
+        detail: "developer.apple.com/documentation/appkit/nssearchtoolbaritem",
+        url: "https://developer.apple.com/documentation/appkit/nssearchtoolbaritem",
     },
-    Suggestion {
-        icon: "globe",
-        title: "Docs.rs",
-        detail: Some("docs.rs"),
-        url: "https://docs.rs",
-        category: Category::TopHit,
+    DemoSuggestion {
+        kind: SuggestionKind::History,
+        title: "NSPopover",
+        detail: "developer.apple.com/documentation/appkit/nspopover",
+        url: "https://developer.apple.com/documentation/appkit/nspopover",
+    },
+    DemoSuggestion {
+        kind: SuggestionKind::History,
+        title: "Glass Repo",
+        detail: "github.com/Glass-HQ/Glass",
+        url: "https://github.com/Glass-HQ/Glass",
     },
 ];
 
-fn filter_suggestions(query: &str) -> Vec<Suggestion> {
-    if query.is_empty() {
-        return SUGGESTIONS.to_vec();
-    }
-    let lower = query.to_lowercase();
-    SUGGESTIONS
-        .iter()
-        .filter(|s| {
-            s.title.to_lowercase().contains(&lower)
-                || s.detail
-                    .map(|d| d.to_lowercase().contains(&lower))
-                    .unwrap_or(false)
-                || s.url.to_lowercase().contains(&lower)
-        })
-        .cloned()
-        .collect()
-}
-
-/// Counts the total number of clickable rows for a given query (used for wrapping navigation).
-fn count_rows(query: &str) -> usize {
-    let matches = filter_suggestions(query);
-    let mut count = 0;
-    count += matches
-        .iter()
-        .filter(|s| s.category == Category::TopHit)
-        .count();
-    count += matches
-        .iter()
-        .filter(|s| s.category == Category::Bookmark)
-        .count();
-    count += matches
-        .iter()
-        .filter(|s| s.category == Category::History)
-        .count();
-    if !query.is_empty() {
-        count += 1; // web search row
-    }
-    count
-}
-
-// ── App state ───────────────────────────────────────────────────────────────
-
-struct SearchApp {
-    toolbar_installed: bool,
-    search_text: String,
-    current_url: String,
-    current_title: String,
-    panel_visible: bool,
+struct SearchResultsView {
+    controller: WeakEntity<SearchSuggestionsExample>,
+    anchor: SearchAnchor,
+    rows: Vec<SuggestionRow>,
     selected_index: Option<usize>,
-    history: Vec<(String, String)>,
-    history_index: Option<usize>,
 }
 
-impl SearchApp {
+impl SearchResultsView {
+    fn new(controller: WeakEntity<SearchSuggestionsExample>) -> Self {
+        Self {
+            controller,
+            anchor: SearchAnchor::Toolbar,
+            rows: Vec::new(),
+            selected_index: None,
+        }
+    }
+
+    fn set_rows(
+        &mut self,
+        anchor: SearchAnchor,
+        rows: Vec<SuggestionRow>,
+        selected_index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.anchor = anchor;
+        self.rows = rows;
+        self.selected_index = selected_index;
+        cx.notify();
+    }
+}
+
+impl Render for SearchResultsView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_dark = matches!(
+            window.appearance(),
+            WindowAppearance::Dark | WindowAppearance::VibrantDark
+        );
+        let (fg, muted, border, hover_bg, selected_bg) = if is_dark {
+            (
+                rgb(0xf6f8fb),
+                rgb(0xa2adbc),
+                rgba(0xffffff14),
+                rgba(0xffffff0a),
+                rgba(0x4d90fe38),
+            )
+        } else {
+            (
+                rgb(0x162033),
+                rgb(0x697489),
+                rgba(0x0f172a14),
+                rgba(0x0f172a08),
+                rgba(0x0a84ff29),
+            )
+        };
+
+        div()
+            .id("search-results-scroll")
+            .flex()
+            .flex_col()
+            .size_full()
+            .overflow_y_scroll()
+            .p_2()
+            .gap_1()
+            .child(
+                div()
+                    .px_2()
+                    .pt_1()
+                    .pb_2()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(div().text_xs().text_color(muted).child(self.anchor.title())),
+            )
+            .children(self.rows.iter().enumerate().map(|(index, row)| {
+                let controller = self.controller.clone();
+                let title = row.title.clone();
+                let detail = row.detail.clone();
+                let badge = row.kind.badge();
+                let is_selected = self.selected_index == Some(index);
+
+                div()
+                    .id(("search-result-row", index))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .border_1()
+                    .border_color(if is_selected {
+                        selected_bg
+                    } else {
+                        rgba(0x00000000)
+                    })
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .when(is_selected, |row| row.bg(selected_bg))
+                    .when(!is_selected, |row| row.hover(|style| style.bg(hover_bg)))
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        window.dismiss_native_search_suggestion_menu();
+                        let _ = controller.update(cx, |controller, cx| {
+                            controller.activate_suggestion(index, window, cx);
+                        });
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().text_sm().text_color(fg).child(title.clone()))
+                            .child(div().text_xs().text_color(muted).child(badge)),
+                    )
+                    .child(div().text_xs().text_color(muted).child(detail.clone()))
+            }))
+    }
+}
+
+struct SearchSuggestionsExample {
+    toolbar_installed: bool,
+    toolbar_search_text: String,
+    content_search_text: String,
+    current_title: String,
+    current_url: String,
+    active_anchor: Option<SearchAnchor>,
+    rows: Vec<SuggestionRow>,
+    selected_index: Option<usize>,
+    results_view: Option<Entity<SearchResultsView>>,
+}
+
+impl SearchSuggestionsExample {
     fn new() -> Self {
         Self {
             toolbar_installed: false,
-            search_text: String::new(),
-            current_url: String::new(),
+            toolbar_search_text: String::new(),
+            content_search_text: String::new(),
             current_title: "New Tab".to_string(),
-            panel_visible: false,
+            current_url: String::new(),
+            active_anchor: None,
+            rows: Vec::new(),
             selected_index: None,
-            history: Vec::new(),
-            history_index: None,
+            results_view: None,
         }
     }
 
-    fn navigate_to(&mut self, url: &str, title: &str) {
-        self.current_url = url.to_string();
-        self.current_title = title.to_string();
-        if let Some(index) = self.history_index {
-            self.history.truncate(index + 1);
+    fn ensure_results_view(&mut self, cx: &mut Context<Self>) -> Entity<SearchResultsView> {
+        if let Some(view) = &self.results_view {
+            return view.clone();
         }
-        self.history.push((url.to_string(), title.to_string()));
-        self.history_index = Some(self.history.len() - 1);
+
+        let controller = cx.entity().downgrade();
+        let view = cx.new(|_| SearchResultsView::new(controller));
+        self.results_view = Some(view.clone());
+        view
     }
 
-    fn go_back(&mut self) {
-        if let Some(index) = self.history_index {
-            if index > 0 {
-                let new_index = index - 1;
-                self.history_index = Some(new_index);
-                let (url, title) = self.history[new_index].clone();
-                self.current_url = url;
-                self.current_title = title;
-            }
+    fn build_rows(query: &str) -> Vec<SuggestionRow> {
+        let mut rows = Vec::new();
+        let trimmed_query = query.trim();
+        if !trimmed_query.is_empty() {
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(trimmed_query.as_bytes()).collect();
+            rows.push(SuggestionRow {
+                kind: SuggestionKind::Search,
+                title: format!("Search for “{}”", trimmed_query),
+                detail: "Google".to_string(),
+                url: format!("https://www.google.com/search?q={encoded}"),
+            });
+        }
+
+        let query_lower = trimmed_query.to_lowercase();
+        let mut matches: Vec<SuggestionRow> = SUGGESTIONS
+            .iter()
+            .filter(|entry| {
+                trimmed_query.is_empty()
+                    || entry.title.to_lowercase().contains(&query_lower)
+                    || entry.detail.to_lowercase().contains(&query_lower)
+                    || entry.url.to_lowercase().contains(&query_lower)
+            })
+            .map(|entry| SuggestionRow {
+                kind: entry.kind,
+                title: entry.title.to_string(),
+                detail: entry.detail.to_string(),
+                url: entry.url.to_string(),
+            })
+            .collect();
+
+        matches.sort_by_key(|entry| match entry.kind {
+            SuggestionKind::TopHit => 0,
+            SuggestionKind::Bookmark => 1,
+            SuggestionKind::History => 2,
+            SuggestionKind::Search => 3,
+        });
+        matches.truncate(7);
+        rows.extend(matches);
+        rows
+    }
+
+    fn menu_height(row_count: usize) -> f64 {
+        (HEADER_HEIGHT + row_count as f64 * ROW_HEIGHT + MENU_PADDING)
+            .clamp(MENU_MIN_HEIGHT, MENU_MAX_HEIGHT)
+    }
+
+    fn query_for(&self, anchor: SearchAnchor) -> &str {
+        match anchor {
+            SearchAnchor::Toolbar => &self.toolbar_search_text,
+            SearchAnchor::Content => &self.content_search_text,
         }
     }
 
-    fn go_forward(&mut self) {
-        if let Some(index) = self.history_index {
-            if index + 1 < self.history.len() {
-                let new_index = index + 1;
-                self.history_index = Some(new_index);
-                let (url, title) = self.history[new_index].clone();
-                self.current_url = url;
-                self.current_title = title;
-            }
+    fn refresh_results_for(
+        &mut self,
+        anchor: SearchAnchor,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!(
+            "[native_search_suggestions] refresh_results_for anchor={anchor:?} query={query:?}"
+        );
+        match anchor {
+            SearchAnchor::Toolbar => self.toolbar_search_text = query,
+            SearchAnchor::Content => self.content_search_text = query,
         }
+
+        self.active_anchor = Some(anchor);
+        self.rows = Self::build_rows(self.query_for(anchor));
+        self.selected_index = (!self.rows.is_empty()).then_some(0);
+
+        if self.rows.is_empty() {
+            self.dismiss_results(window, cx);
+            return;
+        }
+
+        let view = self.ensure_results_view(cx);
+        view.update(cx, |view, cx| {
+            view.set_rows(anchor, self.rows.clone(), self.selected_index, cx);
+        });
+
+        let menu_height = Self::menu_height(self.rows.len());
+        window.update_native_search_suggestion_menu(
+            NativeSearchSuggestionMenu::new(MENU_WIDTH, menu_height).content_view(view),
+            anchor.target(),
+        );
+        cx.notify();
+    }
+
+    fn dismiss_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        eprintln!(
+            "[native_search_suggestions] dismiss_results active_anchor={:?} rows={}",
+            self.active_anchor,
+            self.rows.len()
+        );
+        window.dismiss_native_search_suggestion_menu();
+        self.active_anchor = None;
+        self.rows.clear();
+        self.selected_index = None;
+        cx.notify();
+    }
+
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.rows.is_empty() {
+            return;
+        }
+
+        let current_index = self.selected_index.unwrap_or(0) as isize;
+        let len = self.rows.len() as isize;
+        let next_index = (current_index + delta).rem_euclid(len) as usize;
+        eprintln!(
+            "[native_search_suggestions] move_selection delta={delta} current={current_index} next={next_index}"
+        );
+        self.selected_index = Some(next_index);
+        if let Some(view) = &self.results_view {
+            view.update(cx, |view, cx| {
+                view.set_rows(
+                    self.active_anchor.unwrap_or(SearchAnchor::Toolbar),
+                    self.rows.clone(),
+                    self.selected_index,
+                    cx,
+                );
+            });
+        }
+        cx.notify();
+    }
+
+    fn submit_search(
+        &mut self,
+        anchor: SearchAnchor,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!(
+            "[native_search_suggestions] submit_search anchor={anchor:?} text={text:?} selected_index={:?}",
+            self.selected_index
+        );
+        let submitted_text = if text.trim().is_empty() {
+            self.query_for(anchor).trim().to_string()
+        } else {
+            text.trim().to_string()
+        };
+
+        if let Some(selected_index) = self.selected_index {
+            self.activate_suggestion(selected_index, window, cx);
+            return;
+        }
+
+        if submitted_text.is_empty() {
+            self.dismiss_results(window, cx);
+            return;
+        }
+
+        let encoded: String =
+            url::form_urlencoded::byte_serialize(submitted_text.as_bytes()).collect();
+        self.commit_navigation(
+            format!("Search for “{}”", submitted_text),
+            format!("https://www.google.com/search?q={encoded}"),
+            window,
+            cx,
+        );
+    }
+
+    fn activate_suggestion(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        eprintln!("[native_search_suggestions] activate_suggestion index={index}");
+        let Some(row) = self.rows.get(index).cloned() else {
+            return;
+        };
+        self.commit_navigation(row.title, row.url, window, cx);
+    }
+
+    fn commit_navigation(
+        &mut self,
+        title: String,
+        url: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        eprintln!("[native_search_suggestions] commit_navigation title={title:?} url={url:?}");
+        self.current_title = title;
+        self.current_url = url;
+        self.content_search_text.clear();
+        self.dismiss_results(window, cx);
     }
 }
 
-impl Render for SearchApp {
+impl Render for SearchSuggestionsExample {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.toolbar_installed {
             let weak_back = cx.entity().downgrade();
-            let weak_forward = cx.entity().downgrade();
             let weak_change = cx.entity().downgrade();
             let weak_submit = cx.entity().downgrade();
             let weak_move_up = cx.entity().downgrade();
             let weak_move_down = cx.entity().downgrade();
             let weak_cancel = cx.entity().downgrade();
+            let weak_begin_editing = cx.entity().downgrade();
             let weak_end_editing = cx.entity().downgrade();
 
             window.set_native_toolbar(Some(
                 NativeToolbar::new("search_suggestions.toolbar")
                     .title("Search Suggestions Demo")
                     .display_mode(NativeToolbarDisplayMode::IconOnly)
-                    .size_mode(NativeToolbarSizeMode::Regular)
                     .shows_baseline_separator(true)
                     .item(NativeToolbarItem::Button(
-                        NativeToolbarButton::new("back", "Back")
-                            .icon("chevron.left")
-                            .tool_tip("Go back")
-                            .on_click(move |_: &NativeToolbarClickEvent, _window, cx| {
-                                weak_back
-                                    .update(cx, |this, cx| {
-                                        this.go_back();
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }),
-                    ))
-                    .item(NativeToolbarItem::Button(
-                        NativeToolbarButton::new("forward", "Forward")
-                            .icon("chevron.right")
-                            .tool_tip("Go forward")
-                            .on_click(move |_: &NativeToolbarClickEvent, _window, cx| {
-                                weak_forward
-                                    .update(cx, |this, cx| {
-                                        this.go_forward();
-                                        cx.notify();
-                                    })
-                                    .ok();
+                        NativeToolbarButton::new("focus-content", "Focus New Tab Search")
+                            .icon("sidebar.left")
+                            .tool_tip("Focus the new tab search field")
+                            .on_click(move |_: &NativeToolbarClickEvent, window, cx| {
+                                let _ = weak_back.update(cx, |_, _| {
+                                    window.focus_native_search_field(
+                                        NativeSearchFieldTarget::ContentElement(
+                                            CONTENT_SEARCH_ID.into(),
+                                        ),
+                                        true,
+                                    );
+                                });
                             }),
                     ))
                     .item(NativeToolbarItem::SearchField(
-                        NativeToolbarSearchField::new("search")
-                            .placeholder("Search or enter URL...")
-                            .min_width(px(300.0))
-                            .max_width(px(600.0))
+                        NativeToolbarSearchField::new(TOOLBAR_SEARCH_ID)
+                            .placeholder("Search or enter URL")
+                            .min_width(px(280.0))
+                            .max_width(px(520.0))
+                            .preferred_width_for_search_field(px(520.0))
+                            .resigns_first_responder_with_cancel(true)
+                            .on_begin_editing(
+                                move |event: &NativeToolbarSearchEvent, window, cx| {
+                                    let text = event.text.clone();
+                                    eprintln!(
+                                        "[native_search_suggestions] toolbar on_begin_editing text={text:?}"
+                                    );
+                                    let _ = weak_begin_editing.update(cx, |this, cx| {
+                                        this.refresh_results_for(
+                                            SearchAnchor::Toolbar,
+                                            text,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                },
+                            )
                             .on_change(move |event: &NativeToolbarSearchEvent, window, cx| {
                                 let text = event.text.clone();
-                                weak_change
-                                    .update(cx, |this, cx| {
-                                        this.search_text = text.clone();
-                                        this.panel_visible = !text.is_empty();
-                                        this.selected_index = None;
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                if text.is_empty() {
-                                    window.dismiss_native_panel();
-                                } else {
-                                    let matches = filter_suggestions(&text);
-                                    if matches.is_empty() {
-                                        window.dismiss_native_panel();
-                                    } else {
-                                        show_suggestion_panel(&text, None, window);
-                                    }
-                                }
+                                eprintln!(
+                                    "[native_search_suggestions] toolbar on_change text={text:?}"
+                                );
+                                let _ = weak_change.update(cx, |this, cx| {
+                                    this.refresh_results_for(
+                                        SearchAnchor::Toolbar,
+                                        text,
+                                        window,
+                                        cx,
+                                    );
+                                });
                             })
                             .on_submit(move |event: &NativeToolbarSearchEvent, window, cx| {
                                 let text = event.text.clone();
-                                window.dismiss_native_panel();
-                                weak_submit
-                                    .update(cx, |this, cx| {
-                                        // If a row is selected via keyboard, navigate to it
-                                        if let Some(selected) = this.selected_index {
-                                            if let Some(url) =
-                                                url_for_selected_row(&this.search_text, selected)
-                                            {
-                                                this.navigate_to(&url, &url);
-                                                this.panel_visible = false;
-                                                this.selected_index = None;
-                                                cx.notify();
-                                                return;
-                                            }
-                                        }
-                                        this.panel_visible = false;
-                                        this.selected_index = None;
-                                        if text.starts_with("http://")
-                                            || text.starts_with("https://")
-                                        {
-                                            this.navigate_to(&text, &text);
-                                        } else {
-                                            let url =
-                                                format!("https://google.com/search?q={}", text);
-                                            this.navigate_to(&url, &format!("Search: {}", text));
-                                        }
-                                        cx.notify();
-                                    })
-                                    .ok();
+                                eprintln!(
+                                    "[native_search_suggestions] toolbar on_submit text={text:?}"
+                                );
+                                let _ = weak_submit.update(cx, |this, cx| {
+                                    this.submit_search(SearchAnchor::Toolbar, text, window, cx);
+                                });
                             })
-                            .on_move_down(move |_event: &NativeToolbarSearchEvent, window, cx| {
-                                weak_move_down
-                                    .update(cx, |this, cx| {
-                                        let total = count_rows(&this.search_text);
-                                        if total == 0 {
-                                            return;
-                                        }
-                                        this.selected_index = Some(match this.selected_index {
-                                            Some(i) => (i + 1) % total,
-                                            None => 0,
-                                        });
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                // Re-read state to show updated panel
-                                if let Ok(text) =
-                                    weak_move_down.read_with(cx, |this, _| this.search_text.clone())
-                                {
-                                    let selected = weak_move_down
-                                        .read_with(cx, |this, _| this.selected_index)
-                                        .ok()
-                                        .flatten();
-                                    if !text.is_empty() {
-                                        show_suggestion_panel(&text, selected, window);
+                            .on_move_up(move |_, _, cx| {
+                                eprintln!("[native_search_suggestions] toolbar on_move_up");
+                                let _ = weak_move_up.update(cx, |this, cx| {
+                                    this.move_selection(-1, cx);
+                                });
+                            })
+                            .on_move_down(move |_, _, cx| {
+                                eprintln!("[native_search_suggestions] toolbar on_move_down");
+                                let _ = weak_move_down.update(cx, |this, cx| {
+                                    this.move_selection(1, cx);
+                                });
+                            })
+                            .on_cancel(move |_, window, cx| {
+                                eprintln!("[native_search_suggestions] toolbar on_cancel");
+                                let _ = weak_cancel.update(cx, |this, cx| {
+                                    this.dismiss_results(window, cx);
+                                });
+                            })
+                            .on_end_editing(move |_, window, cx| {
+                                eprintln!("[native_search_suggestions] toolbar on_end_editing");
+                                let _ = weak_end_editing.update(cx, |this, cx| {
+                                    if this.active_anchor == Some(SearchAnchor::Toolbar) {
+                                        this.dismiss_results(window, cx);
                                     }
-                                }
-                            })
-                            .on_move_up(move |_event: &NativeToolbarSearchEvent, window, cx| {
-                                weak_move_up
-                                    .update(cx, |this, cx| {
-                                        let total = count_rows(&this.search_text);
-                                        if total == 0 {
-                                            return;
-                                        }
-                                        this.selected_index = Some(match this.selected_index {
-                                            Some(0) | None => total.saturating_sub(1),
-                                            Some(i) => i - 1,
-                                        });
-                                        cx.notify();
-                                    })
-                                    .ok();
-                                if let Ok(text) =
-                                    weak_move_up.read_with(cx, |this, _| this.search_text.clone())
-                                {
-                                    let selected = weak_move_up
-                                        .read_with(cx, |this, _| this.selected_index)
-                                        .ok()
-                                        .flatten();
-                                    if !text.is_empty() {
-                                        show_suggestion_panel(&text, selected, window);
-                                    }
-                                }
-                            })
-                            .on_cancel(move |_event: &NativeToolbarSearchEvent, window, cx| {
-                                window.dismiss_native_panel();
-                                weak_cancel
-                                    .update(cx, |this, cx| {
-                                        this.panel_visible = false;
-                                        this.selected_index = None;
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            })
-                            .on_end_editing(
-                                move |_event: &NativeToolbarSearchEvent, window, cx| {
-                                    window.dismiss_native_panel();
-                                    weak_end_editing
-                                        .update(cx, |this, cx| {
-                                            this.panel_visible = false;
-                                            this.selected_index = None;
-                                            cx.notify();
-                                        })
-                                        .ok();
-                                },
-                            ),
+                                });
+                            }),
                     )),
             ));
             self.toolbar_installed = true;
@@ -416,264 +587,220 @@ impl Render for SearchApp {
             window.appearance(),
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         );
-        let (bg, fg, muted, accent) = if is_dark {
-            (rgb(0x1c1f24), rgb(0xffffff), rgb(0x8b95a3), rgb(0x58a6ff))
+        let (bg, card_bg, fg, muted, card_border, accent) = if is_dark {
+            (
+                rgb(0x12161d),
+                rgba(0xffffff0a),
+                rgb(0xf6f8fb),
+                rgb(0x9aa6b8),
+                rgba(0xffffff14),
+                rgb(0x68a4ff),
+            )
         } else {
-            (rgb(0xf5f7fa), rgb(0x1b2230), rgb(0x5f6978), rgb(0x0366d6))
+            (
+                rgb(0xf4f6f9),
+                rgba(0xffffffb2),
+                rgb(0x192334),
+                rgb(0x677489),
+                rgba(0x0f172a14),
+                rgb(0x0a84ff),
+            )
         };
+        let weak_content_focus = cx.entity().downgrade();
+        let weak_content_change = cx.entity().downgrade();
+        let weak_content_submit = cx.entity().downgrade();
+        let weak_content_move_up = cx.entity().downgrade();
+        let weak_content_move_down = cx.entity().downgrade();
+        let weak_content_cancel = cx.entity().downgrade();
+        let weak_content_blur = cx.entity().downgrade();
 
-        if !self.current_url.is_empty() {
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .bg(bg)
-                .child(
-                    div()
-                        .text_2xl()
-                        .text_color(fg)
-                        .child(self.current_title.clone()),
-                )
-                .child(
-                    div()
-                        .text_base()
-                        .text_color(accent)
-                        .child(self.current_url.clone()),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(format!("History: {} entries", self.history.len())),
-                )
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .bg(bg)
-                .child(div().text_3xl().text_color(fg).child("New Tab"))
-                .child(
-                    div()
-                        .text_base()
-                        .text_color(muted)
-                        .child("Type in the search field to see suggestions"),
-                )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child("Try: \"rust\", \"apple\", \"github\", \"zed\""),
-                )
-        }
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(bg)
+            .p_6()
+            .gap_6()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().text_3xl().text_color(fg).child("Native Search Surfaces"))
+                    .child(
+                        div()
+                            .text_base()
+                            .text_color(muted)
+                            .child(
+                                "Toolbar search uses NSSearchToolbarItem. New-tab search uses NSSearchField. Both result surfaces use the native search suggestion menu anchored to the field.",
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .p_5()
+                    .bg(card_bg)
+                    .border_1()
+                    .border_color(card_border)
+                    .rounded_xl()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("New Tab Search"),
+                    )
+                    .child(
+                        native_search_field(CONTENT_SEARCH_ID)
+                            .placeholder("Search the web or jump to a page")
+                            .value(self.content_search_text.clone())
+                            .w(px(520.0))
+                            .h(px(34.0))
+                            .on_focus(move |window, cx| {
+                                eprintln!("[native_search_suggestions] content on_focus");
+                                let _ = weak_content_focus.update(cx, |this, cx| {
+                                    this.refresh_results_for(
+                                        SearchAnchor::Content,
+                                        this.content_search_text.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .on_change(move |event: &SearchChangeEvent, window, cx| {
+                                let text = event.text.clone();
+                                eprintln!(
+                                    "[native_search_suggestions] content on_change text={text:?}"
+                                );
+                                let _ = weak_content_change.update(cx, |this, cx| {
+                                    this.refresh_results_for(
+                                        SearchAnchor::Content,
+                                        text,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            })
+                            .on_submit(move |event: &SearchSubmitEvent, window, cx| {
+                                let text = event.text.clone();
+                                eprintln!(
+                                    "[native_search_suggestions] content on_submit text={text:?}"
+                                );
+                                let _ = weak_content_submit.update(cx, |this, cx| {
+                                    this.submit_search(SearchAnchor::Content, text, window, cx);
+                                });
+                            })
+                            .on_move_up(move |window, cx| {
+                                eprintln!("[native_search_suggestions] content on_move_up");
+                                let _ = weak_content_move_up.update(cx, |this, cx| {
+                                    if this.active_anchor == Some(SearchAnchor::Content) {
+                                        this.move_selection(-1, cx);
+                                    } else {
+                                        this.refresh_results_for(
+                                            SearchAnchor::Content,
+                                            this.content_search_text.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            })
+                            .on_move_down(move |window, cx| {
+                                eprintln!("[native_search_suggestions] content on_move_down");
+                                let _ = weak_content_move_down.update(cx, |this, cx| {
+                                    if this.active_anchor == Some(SearchAnchor::Content) {
+                                        this.move_selection(1, cx);
+                                    } else {
+                                        this.refresh_results_for(
+                                            SearchAnchor::Content,
+                                            this.content_search_text.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            })
+                            .on_cancel(move |window, cx| {
+                                eprintln!("[native_search_suggestions] content on_cancel");
+                                let _ = weak_content_cancel.update(cx, |this, cx| {
+                                    this.dismiss_results(window, cx);
+                                });
+                            })
+                            .on_blur(move |_: &SearchSubmitEvent, window, cx| {
+                                eprintln!("[native_search_suggestions] content on_blur");
+                                let _ = weak_content_blur.update(cx, |this, cx| {
+                                    if this.active_anchor == Some(SearchAnchor::Content) {
+                                        this.dismiss_results(window, cx);
+                                    }
+                                });
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("Try “glass”, “apple”, or leave the field empty to see recent destinations."),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .p_5()
+                    .bg(card_bg)
+                    .border_1()
+                    .border_color(card_border)
+                    .rounded_xl()
+                    .child(div().text_sm().text_color(muted).child("Current Page"))
+                    .child(
+                        div()
+                            .text_xl()
+                            .text_color(fg)
+                            .child(self.current_title.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(accent)
+                            .child(if self.current_url.is_empty() {
+                                "Nothing selected yet".to_string()
+                            } else {
+                                self.current_url.clone()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(match self.active_anchor {
+                                Some(anchor) => format!(
+                                    "{} menu open with {} results",
+                                    anchor.title(),
+                                    self.rows.len()
+                                ),
+                                None => "Type in either field to open the anchored search suggestion menu."
+                                    .to_string(),
+                            }),
+                    ),
+            )
     }
-}
-
-/// Returns the URL for a given selected row index, or None if out of bounds.
-/// Rows are ordered: search row (if query non-empty), top hits, bookmarks, history.
-fn url_for_selected_row(query: &str, index: usize) -> Option<String> {
-    let matches = filter_suggestions(query);
-    let mut current = 0;
-
-    // Web search row first
-    if !query.is_empty() {
-        if current == index {
-            return Some(format!("https://google.com/search?q={}", query));
-        }
-        current += 1;
-    }
-
-    for suggestion in matches.iter().filter(|s| s.category == Category::TopHit) {
-        if current == index {
-            return Some(suggestion.url.to_string());
-        }
-        current += 1;
-    }
-    for suggestion in matches.iter().filter(|s| s.category == Category::Bookmark) {
-        if current == index {
-            return Some(suggestion.url.to_string());
-        }
-        current += 1;
-    }
-    for suggestion in matches.iter().filter(|s| s.category == Category::History) {
-        if current == index {
-            return Some(suggestion.url.to_string());
-        }
-        current += 1;
-    }
-
-    None
-}
-
-/// Builds and shows the suggestion panel from the toolbar callback context.
-fn show_suggestion_panel(query: &str, selected_index: Option<usize>, window: &mut Window) {
-    let matches = filter_suggestions(query);
-    if matches.is_empty() && query.is_empty() {
-        window.dismiss_native_panel();
-        return;
-    }
-
-    let bookmarks: Vec<_> = matches
-        .iter()
-        .filter(|s| s.category == Category::Bookmark)
-        .collect();
-    let history: Vec<_> = matches
-        .iter()
-        .filter(|s| s.category == Category::History)
-        .collect();
-    let top_hits: Vec<_> = matches
-        .iter()
-        .filter(|s| s.category == Category::TopHit)
-        .collect();
-
-    let mut items: Vec<NativePopoverContentItem> = Vec::new();
-    let mut row_count = 0usize;
-    let mut row_index = 0usize;
-
-    // "Search Google" row first
-    if !query.is_empty() {
-        let search_label = format!("Search \"{}\"", query);
-        items.push(
-            NativePopoverClickableRow::new(search_label)
-                .icon("magnifyingglass")
-                .detail("Google Search")
-                .selected(selected_index == Some(row_index))
-                .on_click(|window, _cx| {
-                    window.dismiss_native_panel();
-                })
-                .into(),
-        );
-        row_count += 1;
-        row_index += 1;
-    }
-
-    if !top_hits.is_empty() {
-        if !items.is_empty() {
-            items.push(NativePopoverContentItem::separator());
-        }
-        items.push(NativePopoverContentItem::heading("Top Hits"));
-        for suggestion in &top_hits {
-            items.push(
-                NativePopoverClickableRow::new(suggestion.title)
-                    .icon(suggestion.icon)
-                    .detail(suggestion.detail.unwrap_or(""))
-                    .selected(selected_index == Some(row_index))
-                    .on_click(|window, _cx| {
-                        window.dismiss_native_panel();
-                    })
-                    .into(),
-            );
-            row_count += 1;
-            row_index += 1;
-        }
-    }
-
-    if !bookmarks.is_empty() {
-        if !items.is_empty() {
-            items.push(NativePopoverContentItem::separator());
-        }
-        items.push(NativePopoverContentItem::heading("Bookmarks"));
-        for suggestion in &bookmarks {
-            items.push(
-                NativePopoverClickableRow::new(suggestion.title)
-                    .icon(suggestion.icon)
-                    .detail(suggestion.detail.unwrap_or(""))
-                    .selected(selected_index == Some(row_index))
-                    .on_click(|window, _cx| {
-                        window.dismiss_native_panel();
-                    })
-                    .into(),
-            );
-            row_count += 1;
-            row_index += 1;
-        }
-    }
-
-    if !history.is_empty() {
-        if !items.is_empty() {
-            items.push(NativePopoverContentItem::separator());
-        }
-        items.push(NativePopoverContentItem::heading("History"));
-        for suggestion in &history {
-            items.push(
-                NativePopoverClickableRow::new(suggestion.title)
-                    .icon(suggestion.icon)
-                    .detail(suggestion.detail.unwrap_or(""))
-                    .selected(selected_index == Some(row_index))
-                    .on_click(|window, _cx| {
-                        window.dismiss_native_panel();
-                    })
-                    .into(),
-            );
-            row_count += 1;
-            row_index += 1;
-        }
-    }
-
-    let heading_count = [
-        !top_hits.is_empty(),
-        !bookmarks.is_empty(),
-        !history.is_empty(),
-    ]
-    .iter()
-    .filter(|&&b| b)
-    .count();
-    let separator_count = heading_count.saturating_sub(1)
-        + if !query.is_empty() && heading_count > 0 {
-            1
-        } else {
-            0
-        };
-
-    let padding = 16.0;
-    let row_height = 28.0;
-    let heading_height = 28.0;
-    let separator_height = 12.0;
-    // Add separator for the search row if there are other sections
-    let search_separator = if !query.is_empty()
-        && (!top_hits.is_empty() || !bookmarks.is_empty() || !history.is_empty())
-    {
-        separator_height
-    } else {
-        0.0
-    };
-    let content_height = (row_count as f64 * row_height)
-        + (heading_count as f64 * heading_height)
-        + (separator_count as f64 * separator_height)
-        + search_separator
-        + padding * 2.0;
-    let panel_height = content_height.min(400.0);
-
-    let panel = NativePanel::new(400.0, panel_height)
-        .style(NativePanelStyle::Borderless)
-        .level(NativePanelLevel::PopUpMenu)
-        .non_activating(true)
-        .has_shadow(true)
-        .corner_radius(10.0)
-        .material(NativePanelMaterial::Popover)
-        .on_close(|_, _, _| {})
-        .items(items);
-
-    window.show_native_panel(panel, NativePanelAnchor::ToolbarItem("search".into()));
 }
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1120.0), px(760.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| SearchApp::new()),
+            |_, cx| cx.new(|_| SearchSuggestionsExample::new()),
         )
-        .ok();
+        .unwrap();
+
         cx.activate(true);
     });
 }

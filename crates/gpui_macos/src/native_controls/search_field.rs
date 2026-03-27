@@ -25,6 +25,43 @@ pub(crate) unsafe fn create_native_search_field(placeholder: &str) -> id {
     }
 }
 
+/// Creates a toolbar-native search item backed by NSSearchToolbarItem.
+pub(crate) unsafe fn create_native_search_toolbar_item(identifier: id) -> id {
+    unsafe {
+        let item: id = msg_send![class!(NSSearchToolbarItem), alloc];
+        msg_send![item, initWithItemIdentifier: identifier]
+    }
+}
+
+/// Returns the NSSearchField owned by an NSSearchToolbarItem.
+pub(crate) unsafe fn get_native_search_toolbar_item_search_field(item: id) -> id {
+    unsafe { msg_send![item, searchField] }
+}
+
+/// Sets the preferred expanded width AppKit uses while the toolbar search item is focused.
+pub(crate) unsafe fn set_native_search_toolbar_item_preferred_width(item: id, width: f64) {
+    unsafe {
+        let _: () = msg_send![item, setPreferredWidthForSearchField: width];
+    }
+}
+
+/// Controls whether clicking cancel clears the field and resigns focus.
+pub(crate) unsafe fn set_native_search_toolbar_item_resigns_first_responder_with_cancel(
+    item: id,
+    resigns: bool,
+) {
+    unsafe {
+        let _: () = msg_send![item, setResignsFirstResponderWithCancel: resigns as i8];
+    }
+}
+
+/// Expands and focuses a toolbar search item using the native AppKit interaction.
+pub(crate) unsafe fn begin_native_search_toolbar_item_interaction(item: id) {
+    unsafe {
+        let _: () = msg_send![item, beginSearchInteraction];
+    }
+}
+
 /// Sets the current search text.
 pub(crate) unsafe fn set_native_search_field_string_value(field: id, value: &str) {
     unsafe {
@@ -63,7 +100,7 @@ pub(crate) unsafe fn set_native_search_field_sends_whole_string(field: id, sends
     }
 }
 
-/// Releases an NSSearchField.
+/// Releases an NSSearchField created by GPUI.
 pub(crate) unsafe fn release_native_search_field(field: id) {
     unsafe {
         let _: () = msg_send![field, release];

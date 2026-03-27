@@ -269,6 +269,21 @@ pub(crate) unsafe fn show_native_popover_relative_to_toolbar_item(popover: id, t
     }
 }
 
+/// Shows the popover anchored to an NSView.
+pub(crate) unsafe fn show_native_popover_relative_to_view(popover: id, view: id) {
+    unsafe {
+        let bounds: NSRect = msg_send![view, bounds];
+        // NSMaxYEdge.
+        let preferred_edge = 3u64;
+        let _: () = msg_send![
+            popover,
+            showRelativeToRect: bounds
+            ofView: view
+            preferredEdge: preferred_edge
+        ];
+    }
+}
+
 /// Closes the popover.
 pub(crate) unsafe fn dismiss_native_popover(popover: id) {
     unsafe {

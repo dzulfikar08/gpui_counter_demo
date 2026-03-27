@@ -247,6 +247,33 @@ pub(crate) unsafe fn get_native_panel_content_view(panel: id) -> id {
     unsafe { msg_send![panel, contentView] }
 }
 
+/// Returns the inner content host for panel content.
+///
+/// When the panel uses a visual effect material, this returns the
+/// `NSVisualEffectView` child so hosted content preserves the panel's rounded,
+/// translucent shell instead of replacing it.
+pub(crate) unsafe fn get_native_panel_content_host_view(panel: id) -> id {
+    unsafe {
+        let content_view: id = msg_send![panel, contentView];
+        if content_view == nil {
+            return nil;
+        }
+
+        let subviews: id = msg_send![content_view, subviews];
+        let count: usize = msg_send![subviews, count];
+        for index in 0..count {
+            let child: id = msg_send![subviews, objectAtIndex: index];
+            let is_visual_effect_view: cocoa::base::BOOL =
+                msg_send![child, isKindOfClass: class!(NSVisualEffectView)];
+            if is_visual_effect_view == YES {
+                return child;
+            }
+        }
+
+        content_view
+    }
+}
+
 /// Shows the panel, ordering it to the front.
 pub(crate) unsafe fn show_native_panel(panel: id) {
     unsafe {
@@ -371,7 +398,9 @@ pub(crate) unsafe fn get_toolbar_item_screen_frame(
                 let flipped_rect = NSRect::new(
                     NSPoint::new(
                         content_rect.origin.x,
-                        content_bounds.size.height - content_rect.origin.y - content_rect.size.height,
+                        content_bounds.size.height
+                            - content_rect.origin.y
+                            - content_rect.size.height,
                     ),
                     content_rect.size,
                 );

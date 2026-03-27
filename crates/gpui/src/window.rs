@@ -9,18 +9,16 @@ use crate::{
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformNativeSearchFieldTarget, PlatformNativeToolbar,
-    PlatformNativeToolbarButtonItem,
-    PlatformNativeToolbarComboBoxItem, PlatformNativeToolbarDisplayMode, PlatformNativeToolbarItem,
-    PlatformNativeToolbarLabelItem, PlatformNativeToolbarMenuButtonItem,
-    PlatformNativeToolbarMenuItemData,
+    PlatformInputHandler, PlatformNativeAlert, PlatformNativeAlertStyle, PlatformNativeColor,
+    PlatformNativePanel, PlatformNativePanelAnchor, PlatformNativePanelLevel,
+    PlatformNativePanelMaterial, PlatformNativePanelStyle, PlatformNativePopover,
+    PlatformNativePopoverAnchor, PlatformNativePopoverBehavior, PlatformNativePopoverContentItem,
+    PlatformNativeSearchFieldTarget, PlatformNativeSearchSuggestionMenu, PlatformNativeToolbar,
+    PlatformNativeToolbarButtonItem, PlatformNativeToolbarComboBoxItem,
+    PlatformNativeToolbarDisplayMode, PlatformNativeToolbarItem, PlatformNativeToolbarLabelItem,
+    PlatformNativeToolbarMenuButtonItem, PlatformNativeToolbarMenuItemData,
     PlatformNativeToolbarPopUpItem, PlatformNativeToolbarSearchFieldItem,
-    PlatformNativeToolbarSegmentedItem, PlatformNativeToolbarSizeMode,
-    PlatformNativeAlertStyle, PlatformNativeAlert,
-    PlatformNativeColor, PlatformNativePanel, PlatformNativePanelAnchor,
-    PlatformNativePanelLevel, PlatformNativePanelMaterial, PlatformNativePanelStyle,
-    PlatformNativePopover, PlatformNativePopoverAnchor,
-    PlatformNativePopoverBehavior, PlatformNativePopoverContentItem, PlatformWindow, Point,
+    PlatformNativeToolbarSegmentedItem, PlatformNativeToolbarSizeMode, PlatformWindow, Point,
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
@@ -38,6 +36,7 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use gpui_util::{ResultExt, measure, post_inc};
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -63,7 +62,6 @@ use std::{
     },
     time::Duration,
 };
-use gpui_util::{ResultExt, measure, post_inc};
 use uuid::Uuid;
 
 mod prompts;
@@ -103,6 +101,7 @@ pub struct GpuiSurfaceHandle {
 enum HostedSurfaceSlot {
     Popover,
     Panel,
+    SearchSuggestionMenu,
 }
 
 /// State for a registered secondary rendering surface.
@@ -781,12 +780,15 @@ pub struct NativeToolbarSearchField {
     text: SharedString,
     min_width: Pixels,
     max_width: Pixels,
+    preferred_width_for_search_field: Pixels,
+    resigns_first_responder_with_cancel: bool,
     on_change: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
     on_submit: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
     on_move_up: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
     on_move_down: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
     on_cancel: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
-    on_begin_editing: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
+    on_begin_editing:
+        Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
     on_end_editing: Option<Box<dyn Fn(&NativeToolbarSearchEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -799,6 +801,8 @@ impl NativeToolbarSearchField {
             text: SharedString::default(),
             min_width: px(180.0),
             max_width: px(320.0),
+            preferred_width_for_search_field: px(320.0),
+            resigns_first_responder_with_cancel: true,
             on_change: None,
             on_submit: None,
             on_move_up: None,
@@ -830,6 +834,24 @@ impl NativeToolbarSearchField {
     /// Sets the maximum width of the search field.
     pub fn max_width(mut self, max_width: Pixels) -> Self {
         self.max_width = max_width;
+        self
+    }
+
+    /// Sets the preferred expanded width AppKit uses while the field is focused.
+    pub fn preferred_width_for_search_field(
+        mut self,
+        preferred_width_for_search_field: Pixels,
+    ) -> Self {
+        self.preferred_width_for_search_field = preferred_width_for_search_field;
+        self
+    }
+
+    /// Controls whether the cancel button clears the field and resigns focus.
+    pub fn resigns_first_responder_with_cancel(
+        mut self,
+        resigns_first_responder_with_cancel: bool,
+    ) -> Self {
+        self.resigns_first_responder_with_cancel = resigns_first_responder_with_cancel;
         self
     }
 
@@ -926,16 +948,12 @@ pub struct NativeToolbarSegmentedControl {
     id: SharedString,
     segments: Vec<NativeToolbarSegment>,
     selected_index: usize,
-    on_select:
-        Option<Box<dyn Fn(&NativeToolbarSegmentedEvent, &mut Window, &mut App) + 'static>>,
+    on_select: Option<Box<dyn Fn(&NativeToolbarSegmentedEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl NativeToolbarSegmentedControl {
     /// Creates a segmented control with an identifier and segments.
-    pub fn new(
-        id: impl Into<SharedString>,
-        segments: Vec<NativeToolbarSegment>,
-    ) -> Self {
+    pub fn new(id: impl Into<SharedString>, segments: Vec<NativeToolbarSegment>) -> Self {
         Self {
             id: id.into(),
             segments,
@@ -1575,6 +1593,9 @@ impl NativeToolbar {
                         text: search.text,
                         min_width: search.min_width,
                         max_width: search.max_width,
+                        preferred_width_for_search_field: search.preferred_width_for_search_field,
+                        resigns_first_responder_with_cancel: search
+                            .resigns_first_responder_with_cancel,
                         on_change,
                         on_submit,
                         on_move_up,
@@ -2004,6 +2025,8 @@ pub enum NativePopoverAnchor {
     /// Anchor the popover to a toolbar item with the given identifier.
     /// Uses `showRelativeToToolbarItem:` on macOS 14+.
     ToolbarItem(SharedString),
+    /// Anchor the popover to a native content element with the given identifier.
+    ContentElement(SharedString),
 }
 
 /// A named color for use in native popover content items.
@@ -2466,7 +2489,8 @@ impl NativePopover {
         mut self,
         items: impl IntoIterator<Item = impl Into<NativePopoverContentItem>>,
     ) -> Self {
-        self.content_items.extend(items.into_iter().map(|i| i.into()));
+        self.content_items
+            .extend(items.into_iter().map(|i| i.into()));
         self
     }
 
@@ -2482,7 +2506,11 @@ impl NativePopover {
         anchor: NativePopoverAnchor,
         next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
         invalidator: WindowInvalidator,
-    ) -> (PlatformNativePopover, PlatformNativePopoverAnchor, Option<AnyView>) {
+    ) -> (
+        PlatformNativePopover,
+        PlatformNativePopoverAnchor,
+        Option<AnyView>,
+    ) {
         let on_close = self.on_close.map(|handler| -> Box<dyn Fn()> {
             schedule_native_toolbar_callback_no_args(
                 Rc::new(handler),
@@ -2509,15 +2537,15 @@ impl NativePopover {
             NativePopoverBehavior::Semitransient => PlatformNativePopoverBehavior::Semitransient,
         };
 
-        let content_items = convert_popover_content_items(
-            self.content_items,
-            &next_frame_callbacks,
-            &invalidator,
-        );
+        let content_items =
+            convert_popover_content_items(self.content_items, &next_frame_callbacks, &invalidator);
 
         let platform_anchor = match &anchor {
             NativePopoverAnchor::ToolbarItem(id) => {
                 PlatformNativePopoverAnchor::ToolbarItem(id.clone())
+            }
+            NativePopoverAnchor::ContentElement(id) => {
+                PlatformNativePopoverAnchor::ContentElement(id.clone())
             }
         };
 
@@ -2532,6 +2560,102 @@ impl NativePopover {
                 hosted_surface_view: None,
             },
             platform_anchor,
+            self.hosted_view,
+        )
+    }
+}
+
+// =============================================================================
+// Native Search Suggestion Menu
+// =============================================================================
+
+/// Event fired when a native search suggestion menu closes.
+#[derive(Clone, Debug)]
+pub struct NativeSearchSuggestionMenuCloseEvent;
+
+/// Configuration for a native search suggestion menu.
+///
+/// On macOS this is implemented as a non-activating borderless `NSPanel`
+/// anchored to a native search field. The menu stays open while the search
+/// field keeps focus and can be updated in place as results change.
+pub struct NativeSearchSuggestionMenu {
+    width: f64,
+    height: f64,
+    on_close:
+        Option<Box<dyn Fn(&NativeSearchSuggestionMenuCloseEvent, &mut Window, &mut App) + 'static>>,
+    content_items: Vec<NativePopoverContentItem>,
+    hosted_view: Option<AnyView>,
+}
+
+impl NativeSearchSuggestionMenu {
+    /// Creates a search suggestion menu with the given size.
+    pub fn new(width: f64, height: f64) -> Self {
+        Self {
+            width,
+            height,
+            on_close: None,
+            content_items: Vec::new(),
+            hosted_view: None,
+        }
+    }
+
+    /// Registers a handler called when the menu closes.
+    pub fn on_close(
+        mut self,
+        handler: impl Fn(&NativeSearchSuggestionMenuCloseEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_close = Some(Box::new(handler));
+        self
+    }
+
+    /// Adds a content item to the menu.
+    pub fn item(mut self, item: impl Into<NativePopoverContentItem>) -> Self {
+        self.content_items.push(item.into());
+        self
+    }
+
+    /// Adds multiple content items to the menu.
+    pub fn items(
+        mut self,
+        items: impl IntoIterator<Item = impl Into<NativePopoverContentItem>>,
+    ) -> Self {
+        self.content_items
+            .extend(items.into_iter().map(|item| item.into()));
+        self
+    }
+
+    /// Replaces native item content with hosted GPUI content rendered into the menu.
+    pub fn content_view<V: Render>(mut self, view: Entity<V>) -> Self {
+        self.hosted_view = Some(AnyView::from(view));
+        self.content_items.clear();
+        self
+    }
+
+    fn into_platform(
+        self,
+        next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+        invalidator: WindowInvalidator,
+    ) -> (PlatformNativeSearchSuggestionMenu, Option<AnyView>) {
+        let on_close = self.on_close.map(|handler| -> Box<dyn Fn()> {
+            schedule_native_toolbar_callback_no_args(
+                Rc::new(handler),
+                || NativeSearchSuggestionMenuCloseEvent,
+                next_frame_callbacks.clone(),
+                invalidator.clone(),
+            )
+        });
+
+        let content_items =
+            convert_popover_content_items(self.content_items, &next_frame_callbacks, &invalidator);
+
+        (
+            PlatformNativeSearchSuggestionMenu {
+                width: self.width,
+                height: self.height,
+                on_close,
+                content_items,
+                hosted_surface_view: None,
+            },
             self.hosted_view,
         )
     }
@@ -2696,7 +2820,8 @@ impl NativePanel {
         mut self,
         items: impl IntoIterator<Item = impl Into<NativePopoverContentItem>>,
     ) -> Self {
-        self.content_items.extend(items.into_iter().map(|i| i.into()));
+        self.content_items
+            .extend(items.into_iter().map(|i| i.into()));
         self
     }
 
@@ -2712,7 +2837,11 @@ impl NativePanel {
         anchor: NativePanelAnchor,
         next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
         invalidator: WindowInvalidator,
-    ) -> (PlatformNativePanel, PlatformNativePanelAnchor, Option<AnyView>) {
+    ) -> (
+        PlatformNativePanel,
+        PlatformNativePanelAnchor,
+        Option<AnyView>,
+    ) {
         let on_close = self.on_close.map(|handler| -> Box<dyn Fn()> {
             schedule_native_toolbar_callback_no_args(
                 Rc::new(handler),
@@ -2744,11 +2873,8 @@ impl NativePanel {
             NativePanelMaterial::UnderWindow => PlatformNativePanelMaterial::UnderWindow,
         });
 
-        let content_items = convert_popover_content_items(
-            self.content_items,
-            &next_frame_callbacks,
-            &invalidator,
-        );
+        let content_items =
+            convert_popover_content_items(self.content_items, &next_frame_callbacks, &invalidator);
 
         let platform_anchor = match anchor {
             NativePanelAnchor::ToolbarItem(id) => PlatformNativePanelAnchor::ToolbarItem(id),
@@ -3317,6 +3443,8 @@ pub struct Window {
     #[cfg(target_os = "macos")]
     active_panel_surface: Option<SurfaceId>,
     #[cfg(target_os = "macos")]
+    active_search_suggestion_menu_surface: Option<SurfaceId>,
+    #[cfg(target_os = "macos")]
     active_toolbar_surfaces: Vec<SurfaceId>,
 }
 
@@ -3847,6 +3975,8 @@ impl Window {
             active_popover_surface: None,
             #[cfg(target_os = "macos")]
             active_panel_surface: None,
+            #[cfg(target_os = "macos")]
+            active_search_suggestion_menu_surface: None,
             #[cfg(target_os = "macos")]
             active_toolbar_surfaces: Vec::new(),
         })
@@ -4466,6 +4596,9 @@ impl Window {
         match slot {
             HostedSurfaceSlot::Popover => &mut self.active_popover_surface,
             HostedSurfaceSlot::Panel => &mut self.active_panel_surface,
+            HostedSurfaceSlot::SearchSuggestionMenu => {
+                &mut self.active_search_suggestion_menu_surface
+            }
         }
     }
 
@@ -4502,9 +4635,11 @@ impl Window {
         let next_frame_callbacks = self.next_frame_callbacks.clone();
         let invalidator = self.invalidator.clone();
         Box::new(move || {
-            next_frame_callbacks.borrow_mut().push(Box::new(move |window, _cx| {
-                window.clear_hosted_surface_slot(slot);
-            }));
+            next_frame_callbacks
+                .borrow_mut()
+                .push(Box::new(move |window, _cx| {
+                    window.clear_hosted_surface_slot(slot);
+                }));
             invalidator.set_dirty(true);
         })
     }
@@ -4521,6 +4656,19 @@ impl Window {
                 first();
                 second();
             })),
+        }
+    }
+
+    fn platform_search_field_target(
+        target: NativeSearchFieldTarget,
+    ) -> PlatformNativeSearchFieldTarget {
+        match target {
+            NativeSearchFieldTarget::ToolbarItem(item_id) => {
+                PlatformNativeSearchFieldTarget::ToolbarItem(item_id)
+            }
+            NativeSearchFieldTarget::ContentElement(element_id) => {
+                PlatformNativeSearchFieldTarget::ContentView(element_id.to_string().into())
+            }
         }
     }
 
@@ -4556,10 +4704,8 @@ impl Window {
                 let handle = self.register_surface(hosted_surface.view);
                 self.active_toolbar_surfaces.push(handle.id);
 
-                if let Some(PlatformNativeToolbarItem::Button(button_item)) = platform_toolbar
-                    .items
-                    .iter_mut()
-                    .find(|item| {
+                if let Some(PlatformNativeToolbarItem::Button(button_item)) =
+                    platform_toolbar.items.iter_mut().find(|item| {
                         matches!(
                             item,
                             PlatformNativeToolbarItem::Button(button_item)
@@ -4598,14 +4744,7 @@ impl Window {
         target: NativeSearchFieldTarget,
         select_all_text: bool,
     ) {
-        let platform_target = match target {
-            NativeSearchFieldTarget::ToolbarItem(item_id) => {
-                PlatformNativeSearchFieldTarget::ToolbarItem(item_id)
-            }
-            NativeSearchFieldTarget::ContentElement(element_id) => {
-                PlatformNativeSearchFieldTarget::ContentView(element_id.to_string().into())
-            }
-        };
+        let platform_target = Self::platform_search_field_target(target);
         self.platform_window
             .focus_native_search_field(platform_target, select_all_text);
     }
@@ -4623,14 +4762,16 @@ impl Window {
     /// On macOS this creates an NSPopover with native appearance and behavior.
     /// On other platforms this is currently a no-op.
     pub fn show_native_popover(&mut self, popover: NativePopover, anchor: NativePopoverAnchor) {
-        let (mut platform_popover, platform_anchor, hosted_view) = popover.into_platform_with_anchor(
-            anchor,
-            self.next_frame_callbacks.clone(),
-            self.invalidator.clone(),
-        );
+        let (mut platform_popover, platform_anchor, hosted_view) = popover
+            .into_platform_with_anchor(
+                anchor,
+                self.next_frame_callbacks.clone(),
+                self.invalidator.clone(),
+            );
         #[cfg(target_os = "macos")]
         {
-            if let Some(handle) = self.prepare_hosted_surface(HostedSurfaceSlot::Popover, hosted_view)
+            if let Some(handle) =
+                self.prepare_hosted_surface(HostedSurfaceSlot::Popover, hosted_view)
             {
                 platform_popover.hosted_surface_view = Some(handle.native_view_ptr);
                 platform_popover.on_close = Self::chain_native_close_callbacks(
@@ -4687,14 +4828,73 @@ impl Window {
         self.clear_hosted_surface_slot(HostedSurfaceSlot::Panel);
     }
 
+    /// Shows a native search suggestion menu anchored to a native search field.
+    ///
+    /// On macOS this is implemented as a non-activating borderless panel that
+    /// stays open while the search field keeps focus. Repeated calls update the
+    /// existing menu in place instead of dismissing and recreating it.
+    pub fn show_native_search_suggestion_menu(
+        &mut self,
+        menu: NativeSearchSuggestionMenu,
+        anchor: NativeSearchFieldTarget,
+    ) {
+        let (mut platform_menu, hosted_view) =
+            menu.into_platform(self.next_frame_callbacks.clone(), self.invalidator.clone());
+        let platform_anchor = Self::platform_search_field_target(anchor);
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(hosted_view) = hosted_view {
+                if let Some(surface_id) = self.active_search_suggestion_menu_surface {
+                    self.update_surface_root_view(surface_id, hosted_view);
+                    if let Some(surface_state) = self.surfaces.get(&surface_id) {
+                        platform_menu.hosted_surface_view =
+                            Some(surface_state.surface.native_view_ptr());
+                    }
+                } else if let Some(handle) = self.prepare_hosted_surface(
+                    HostedSurfaceSlot::SearchSuggestionMenu,
+                    Some(hosted_view),
+                ) {
+                    platform_menu.hosted_surface_view = Some(handle.native_view_ptr);
+                    platform_menu.on_close = Self::chain_native_close_callbacks(
+                        platform_menu.on_close.take(),
+                        Some(self.hosted_surface_cleanup_callback(
+                            HostedSurfaceSlot::SearchSuggestionMenu,
+                        )),
+                    );
+                }
+            }
+            self.platform_window
+                .update_native_search_suggestion_menu(platform_menu, platform_anchor);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = hosted_view;
+            self.platform_window
+                .show_native_search_suggestion_menu(platform_menu, platform_anchor);
+        }
+    }
+
+    /// Updates an already visible native search suggestion menu.
+    pub fn update_native_search_suggestion_menu(
+        &mut self,
+        menu: NativeSearchSuggestionMenu,
+        anchor: NativeSearchFieldTarget,
+    ) {
+        self.show_native_search_suggestion_menu(menu, anchor);
+    }
+
+    /// Dismisses any currently shown native search suggestion menu.
+    pub fn dismiss_native_search_suggestion_menu(&mut self) {
+        self.platform_window.dismiss_native_search_suggestion_menu();
+        #[cfg(target_os = "macos")]
+        self.clear_hosted_surface_slot(HostedSurfaceSlot::SearchSuggestionMenu);
+    }
+
     /// Shows a native alert dialog as a sheet attached to this window.
     ///
     /// Returns a `oneshot::Receiver<usize>` that resolves to the button index
     /// when the user dismisses the alert. Button index 0 is the first button added.
-    pub fn show_native_alert(
-        &self,
-        alert: NativeAlert,
-    ) -> Option<oneshot::Receiver<usize>> {
+    pub fn show_native_alert(&self, alert: NativeAlert) -> Option<oneshot::Receiver<usize>> {
         let platform_alert = alert.into_platform();
         self.platform_window.show_native_alert_sheet(platform_alert)
     }
@@ -4810,7 +5010,9 @@ impl Window {
     pub fn register_surface(&mut self, view: AnyView) -> GpuiSurfaceHandle {
         let id = SurfaceId::new();
 
-        let mut surface = self.platform_window.create_surface()
+        let mut surface = self
+            .platform_window
+            .create_surface()
             .expect("platform does not support secondary surfaces");
 
         // Attach window state so the surface view can forward events
@@ -4820,17 +5022,20 @@ impl Window {
 
         let native_view_ptr = surface.native_view_ptr();
 
-        self.surfaces.insert(id, SurfaceState {
-            surface,
-            root_view: view,
-            scene: Scene::default(),
-            layout_engine: Some(TaffyLayoutEngine::new()),
-            dirty: true,
-            mouse_listeners: Vec::new(),
-            hitboxes: Vec::new(),
-            mouse_position: Point::default(),
-            mouse_hit_test: HitTest::default(),
-        });
+        self.surfaces.insert(
+            id,
+            SurfaceState {
+                surface,
+                root_view: view,
+                scene: Scene::default(),
+                layout_engine: Some(TaffyLayoutEngine::new()),
+                dirty: true,
+                mouse_listeners: Vec::new(),
+                hitboxes: Vec::new(),
+                mouse_position: Point::default(),
+                mouse_hit_test: HitTest::default(),
+            },
+        );
 
         GpuiSurfaceHandle {
             id,
@@ -4867,7 +5072,9 @@ impl Window {
             if old_entity != new_entity {
                 log::info!(
                     "update_surface_root_view: surface {:?} root_view {:?} -> {:?}",
-                    id, old_entity, new_entity,
+                    id,
+                    old_entity,
+                    new_entity,
                 );
             }
             surface.root_view = view;
@@ -5272,12 +5479,7 @@ impl Window {
             // Prepaint the surface's element tree — this allocates fresh hitbox IDs
             self.invalidator.set_phase(DrawPhase::Prepaint);
             let mut root_element = root_view.into_any();
-            root_element.prepaint_as_root(
-                Point::default(),
-                surface_size.into(),
-                self,
-                cx,
-            );
+            root_element.prepaint_as_root(Point::default(), surface_size.into(), self, cx);
 
             // Recompute the hit test from the freshly allocated hitboxes so that
             // is_hovered() sees matching IDs during paint. We cannot reuse the
@@ -5325,17 +5527,16 @@ impl Window {
             // unaffected.
             let surface = self.surfaces.get_mut(&id).unwrap();
             surface.scene = std::mem::replace(&mut self.next_frame.scene, main_scene);
-            surface.mouse_listeners = std::mem::replace(&mut self.next_frame.mouse_listeners, main_mouse_listeners);
+            surface.mouse_listeners =
+                std::mem::replace(&mut self.next_frame.mouse_listeners, main_mouse_listeners);
             surface.hitboxes = std::mem::replace(&mut self.next_frame.hitboxes, main_hitboxes);
             // Preserve any input handlers registered by surface elements (e.g.
             // focused text fields) so they survive to the set_input_handler call
             // after draw. The main frame handlers are restored first, then surface
             // handlers are appended — .pop() at line ~4600 will pick up whichever
             // was last pushed (i.e. the focused element's handler).
-            let surface_input_handlers = std::mem::replace(
-                &mut self.next_frame.input_handlers,
-                main_input_handlers,
-            );
+            let surface_input_handlers =
+                std::mem::replace(&mut self.next_frame.input_handlers, main_input_handlers);
             self.next_frame
                 .input_handlers
                 .extend(surface_input_handlers);
@@ -7192,12 +7393,15 @@ impl Window {
         // Put listeners back and persist the surface's hover state so that
         // is_hovered() works correctly during the next surface render.
         let hit_test_changed = {
-            let surface = self.surfaces.get_mut(&surface_id).unwrap();
-            surface.mouse_listeners = mouse_listeners;
-            let changed = surface.mouse_hit_test != self.mouse_hit_test;
-            surface.mouse_position = event_position;
-            surface.mouse_hit_test = self.mouse_hit_test.clone();
-            changed
+            if let Some(surface) = self.surfaces.get_mut(&surface_id) {
+                surface.mouse_listeners = mouse_listeners;
+                let changed = surface.mouse_hit_test != self.mouse_hit_test;
+                surface.mouse_position = event_position;
+                surface.mouse_hit_test = self.mouse_hit_test.clone();
+                changed
+            } else {
+                false
+            }
         };
 
         // Restore main frame state.

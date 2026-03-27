@@ -3,7 +3,7 @@
 /// Demonstrates NSSearchField in a native toolbar with back/forward navigation.
 /// The search field has on_change and on_submit callbacks.
 ///
-/// See `native_search_suggestions.rs` for a version with a suggestion dropdown panel.
+/// See `native_search_suggestions.rs` for a version with a native search suggestion menu.
 use gpui::{
     App, Bounds, Context, NativeToolbar, NativeToolbarButton, NativeToolbarClickEvent,
     NativeToolbarDisplayMode, NativeToolbarItem, NativeToolbarSearchEvent,
@@ -141,6 +141,8 @@ impl Render for BrowserExample {
                             .placeholder("Search or enter URL...")
                             .min_width(px(300.0))
                             .max_width(px(600.0))
+                            .preferred_width_for_search_field(px(600.0))
+                            .resigns_first_responder_with_cancel(true)
                             .on_change(move |event: &NativeToolbarSearchEvent, _window, cx| {
                                 let text = event.text.clone();
                                 this_for_change

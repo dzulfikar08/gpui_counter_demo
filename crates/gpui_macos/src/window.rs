@@ -29,11 +29,12 @@ use gpui::{
     PlatformNativeAlertStyle, PlatformNativePanel, PlatformNativePanelAnchor,
     PlatformNativePanelLevel, PlatformNativePanelMaterial, PlatformNativePanelStyle,
     PlatformNativePopover, PlatformNativePopoverAnchor, PlatformNativePopoverContentItem,
-    PlatformNativeSearchFieldTarget, PlatformNativeToolbar, PlatformNativeToolbarDisplayMode,
-    PlatformNativeToolbarItem, PlatformNativeToolbarMenuItemData, PlatformNativeToolbarSizeMode,
-    PlatformSurface, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, point, px, size,
+    PlatformNativeSearchFieldTarget, PlatformNativeSearchSuggestionMenu, PlatformNativeToolbar,
+    PlatformNativeToolbarDisplayMode, PlatformNativeToolbarItem, PlatformNativeToolbarMenuItemData,
+    PlatformNativeToolbarSizeMode, PlatformSurface, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
+    px, size,
 };
 use image::RgbaImage;
 
@@ -452,12 +453,29 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
 }
 
 enum ToolbarNativeResource {
-    Button { button: id, target: *mut c_void },
-    SearchField { field: id, delegate: *mut c_void },
-    SegmentedControl { control: id, target: *mut c_void },
-    PopUpButton { popup: id, target: *mut c_void },
-    ComboBox { combo: id, delegate: *mut c_void },
-    MenuButton { button: Option<id>, target: *mut c_void },
+    Button {
+        button: id,
+        target: *mut c_void,
+    },
+    SearchField {
+        delegate: *mut c_void,
+    },
+    SegmentedControl {
+        control: id,
+        target: *mut c_void,
+    },
+    PopUpButton {
+        popup: id,
+        target: *mut c_void,
+    },
+    ComboBox {
+        combo: id,
+        delegate: *mut c_void,
+    },
+    MenuButton {
+        button: Option<id>,
+        target: *mut c_void,
+    },
 }
 
 struct ToolbarState {
@@ -501,9 +519,8 @@ impl MacToolbarState {
                         crate::native_controls::release_native_button_target(target);
                         crate::native_controls::release_native_button(button);
                     }
-                    ToolbarNativeResource::SearchField { field, delegate } => {
+                    ToolbarNativeResource::SearchField { delegate } => {
                         crate::native_controls::release_native_text_field_delegate(delegate);
-                        crate::native_controls::release_native_search_field(field);
                     }
                     ToolbarNativeResource::SegmentedControl { control, target } => {
                         crate::native_controls::release_native_segmented_target(target);
@@ -573,6 +590,7 @@ pub(crate) struct MacWindowState {
     toolbar: Option<MacToolbarState>,
     popover: Option<MacPopoverState>,
     panel: Option<MacPanelState>,
+    search_suggestion_menu: Option<MacPanelState>,
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
     // Set while configure_hosted_content is rearranging the NSView hierarchy.
@@ -966,6 +984,7 @@ impl MacWindow {
                 toolbar: None,
                 popover: None,
                 panel: None,
+                search_suggestion_menu: None,
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
                 configuring_hosted_content: false,
@@ -1229,6 +1248,7 @@ impl Drop for MacWindow {
             let toolbar = this.toolbar.take();
             cleanup_popover_state(&mut this.popover);
             cleanup_panel_state(&mut this.panel);
+            cleanup_panel_state(&mut this.search_suggestion_menu);
             this.display_link.take();
             unsafe {
                 this.native_window.setDelegate_(nil);
@@ -1651,6 +1671,20 @@ impl PlatformWindow for MacWindow {
                     }
                 }
             },
+            PlatformNativePopoverAnchor::ContentElement(identifier) => unsafe {
+                let native_window = this.native_window;
+                let content_view: id = msg_send![native_window, contentView];
+                if content_view != nil {
+                    let anchor_view =
+                        find_content_view_by_identifier(content_view, identifier.as_ref());
+                    if anchor_view != nil {
+                        crate::native_controls::show_native_popover_relative_to_view(
+                            popover,
+                            anchor_view,
+                        );
+                    }
+                }
+            },
         }
 
         this.popover = Some(MacPopoverState {
@@ -2041,6 +2075,115 @@ impl PlatformWindow for MacWindow {
     fn dismiss_native_panel(&self) {
         let mut this = self.0.lock();
         cleanup_panel_state(&mut this.panel);
+    }
+
+    fn show_native_search_suggestion_menu(
+        &self,
+        menu: PlatformNativeSearchSuggestionMenu,
+        anchor: PlatformNativeSearchFieldTarget,
+    ) {
+        let mut this = self.0.lock();
+        cleanup_panel_state(&mut this.search_suggestion_menu);
+
+        let (panel, delegate_ptr) = unsafe {
+            crate::native_controls::create_native_panel(
+                menu.width,
+                menu.height,
+                crate::native_controls::NativePanelStyle::Borderless,
+                crate::native_controls::NativePanelLevel::PopUpMenu,
+                true,
+                true,
+                12.0,
+                Some(crate::native_controls::NativePanelMaterial::Popover),
+                menu.on_close,
+            )
+        };
+
+        let (button_targets, switch_targets, checkbox_targets, hover_row_targets) = unsafe {
+            populate_native_panel_content(
+                panel,
+                menu.width,
+                menu.content_items,
+                menu.hosted_surface_view,
+            )
+        };
+
+        unsafe {
+            if !position_search_suggestion_panel(
+                this.native_window,
+                panel,
+                &anchor,
+                menu.width,
+                menu.height,
+            ) {
+                crate::native_controls::show_native_panel_centered(panel);
+            }
+            let parent_window: id = msg_send![panel, parentWindow];
+            if parent_window == nil {
+                let _: () = msg_send![
+                    this.native_window,
+                    addChildWindow: panel
+                    ordered: NSWindowOrderingMode::NSWindowAbove
+                ];
+            }
+            crate::native_controls::show_native_panel(panel);
+        }
+
+        this.search_suggestion_menu = Some(MacPanelState {
+            panel,
+            delegate_ptr,
+            button_targets,
+            switch_targets,
+            checkbox_targets,
+            hover_row_targets,
+        });
+    }
+
+    fn update_native_search_suggestion_menu(
+        &self,
+        menu: PlatformNativeSearchSuggestionMenu,
+        anchor: PlatformNativeSearchFieldTarget,
+    ) {
+        let mut this = self.0.lock();
+        let native_window = this.native_window;
+        let Some(state) = this.search_suggestion_menu.as_mut() else {
+            drop(this);
+            self.show_native_search_suggestion_menu(menu, anchor);
+            return;
+        };
+
+        release_panel_targets(state);
+        unsafe {
+            crate::native_controls::set_native_panel_size(state.panel, menu.width, menu.height);
+        }
+        let (button_targets, switch_targets, checkbox_targets, hover_row_targets) = unsafe {
+            populate_native_panel_content(
+                state.panel,
+                menu.width,
+                menu.content_items,
+                menu.hosted_surface_view,
+            )
+        };
+        state.button_targets = button_targets;
+        state.switch_targets = switch_targets;
+        state.checkbox_targets = checkbox_targets;
+        state.hover_row_targets = hover_row_targets;
+
+        unsafe {
+            let _ = position_search_suggestion_panel(
+                native_window,
+                state.panel,
+                &anchor,
+                menu.width,
+                menu.height,
+            );
+            crate::native_controls::show_native_panel(state.panel);
+        }
+    }
+
+    fn dismiss_native_search_suggestion_menu(&self) {
+        let mut this = self.0.lock();
+        cleanup_panel_state(&mut this.search_suggestion_menu);
     }
 
     fn blur_native_field_editor(&self) {
@@ -2686,7 +2829,7 @@ impl PlatformWindow for MacWindow {
     fn create_surface(&self) -> Option<Box<dyn PlatformSurface>> {
         Some(Box::new(crate::gpui_surface::GpuiSurface::new(
             self.0.lock().renderer.shared().clone(),
-            false,
+            true,
         )))
     }
 
@@ -3937,6 +4080,320 @@ fn toolbar_size_mode_to_native(mode: PlatformNativeToolbarSizeMode) -> NSUIntege
     }
 }
 
+fn release_panel_targets(panel_state: &mut MacPanelState) {
+    unsafe {
+        for target in panel_state.button_targets.drain(..) {
+            crate::native_controls::release_native_button_target(target);
+        }
+        for target in panel_state.switch_targets.drain(..) {
+            crate::native_controls::release_native_popover_switch_target(target);
+        }
+        for target in panel_state.checkbox_targets.drain(..) {
+            crate::native_controls::release_native_popover_checkbox_target(target);
+        }
+        for target in panel_state.hover_row_targets.drain(..) {
+            crate::native_controls::release_native_hover_row_target(target);
+        }
+    }
+}
+
+unsafe fn clear_native_view_subviews(view: id) {
+    unsafe {
+        let subviews: id = msg_send![view, subviews];
+        let count: NSUInteger = msg_send![subviews, count];
+        for index in (0..count).rev() {
+            let child: id = msg_send![subviews, objectAtIndex: index];
+            let _: () = msg_send![child, removeFromSuperview];
+        }
+    }
+}
+
+unsafe fn populate_native_panel_content(
+    panel: id,
+    width: f64,
+    content_items: Vec<PlatformNativePopoverContentItem>,
+    hosted_surface_view: Option<*mut c_void>,
+) -> (
+    Vec<*mut c_void>,
+    Vec<*mut c_void>,
+    Vec<*mut c_void>,
+    Vec<*mut c_void>,
+) {
+    unsafe {
+        let mut button_targets = Vec::new();
+        let mut switch_targets = Vec::new();
+        let mut checkbox_targets = Vec::new();
+        let mut hover_row_targets = Vec::new();
+        let content_host_view = crate::native_controls::get_native_panel_content_host_view(panel);
+        clear_native_view_subviews(content_host_view);
+
+        if let Some(hosted_surface_view) = hosted_surface_view {
+            let bounds: NSRect = msg_send![content_host_view, bounds];
+            let _: () = msg_send![hosted_surface_view as id, setFrame: bounds];
+            let _: () = msg_send![hosted_surface_view as id, setAutoresizingMask: 18u64];
+            let _: () = msg_send![content_host_view, addSubview: hosted_surface_view as id];
+            return (
+                button_targets,
+                switch_targets,
+                checkbox_targets,
+                hover_row_targets,
+            );
+        }
+
+        let padding = 16.0;
+        let content_width = width - padding * 2.0;
+        let mut item_heights = Vec::with_capacity(content_items.len());
+        for item in &content_items {
+            let height =
+                match item {
+                    PlatformNativePopoverContentItem::Label { bold, .. } => {
+                        if *bold {
+                            28.0
+                        } else {
+                            22.0
+                        }
+                    }
+                    PlatformNativePopoverContentItem::SmallLabel { .. } => 18.0,
+                    PlatformNativePopoverContentItem::IconLabel { .. } => 24.0,
+                    PlatformNativePopoverContentItem::Button { .. } => 32.0,
+                    PlatformNativePopoverContentItem::Toggle { description, .. } => {
+                        if description.is_some() { 44.0 } else { 30.0 }
+                    }
+                    PlatformNativePopoverContentItem::Checkbox { .. } => 24.0,
+                    PlatformNativePopoverContentItem::ProgressBar { label, .. } => {
+                        if label.is_some() { 36.0 } else { 20.0 }
+                    }
+                    PlatformNativePopoverContentItem::ColorDot { detail, .. } => {
+                        if detail.is_some() { 38.0 } else { 24.0 }
+                    }
+                    PlatformNativePopoverContentItem::ClickableRow { detail, .. } => {
+                        if detail.is_some() { 36.0 } else { 28.0 }
+                    }
+                    PlatformNativePopoverContentItem::Separator => 12.0,
+                };
+            item_heights.push(height);
+        }
+
+        let total_content_height = item_heights.iter().sum::<f64>() + padding * 2.0;
+        let content_bounds: NSRect = msg_send![content_host_view, bounds];
+        let scroll_view: id = msg_send![class!(NSScrollView), alloc];
+        let scroll_view: id = msg_send![scroll_view, initWithFrame: content_bounds];
+        let _: () = msg_send![scroll_view, setHasVerticalScroller: YES];
+        let _: () = msg_send![scroll_view, setHasHorizontalScroller: NO];
+        let _: () = msg_send![scroll_view, setDrawsBackground: NO];
+        let _: () = msg_send![scroll_view, setAutoresizingMask: 18u64];
+
+        let doc_frame = NSRect::new(
+            NSPoint::new(0.0, 0.0),
+            NSSize::new(width, total_content_height),
+        );
+        let doc_view: id = msg_send![class!(NSView), alloc];
+        let doc_view: id = msg_send![doc_view, initWithFrame: doc_frame];
+        let _: () = msg_send![scroll_view, setDocumentView: doc_view];
+        let _: () = msg_send![doc_view, release];
+
+        let _: () = msg_send![content_host_view, addSubview: scroll_view];
+        let _: () = msg_send![scroll_view, release];
+
+        let mut top_y = padding;
+        for (item, height) in content_items.into_iter().zip(item_heights) {
+            let flipped_y = total_content_height - top_y - height;
+
+            match item {
+                PlatformNativePopoverContentItem::Label { text, bold } => {
+                    let font_size = if bold { 15.0 } else { 13.0 };
+                    let label_height = if bold { 22.0 } else { 18.0 };
+                    crate::native_controls::add_native_popover_label(
+                        doc_view,
+                        text.as_ref(),
+                        padding,
+                        flipped_y,
+                        content_width,
+                        label_height,
+                        font_size,
+                        bold,
+                    );
+                }
+                PlatformNativePopoverContentItem::SmallLabel { text } => {
+                    crate::native_controls::add_native_popover_small_label(
+                        doc_view,
+                        text.as_ref(),
+                        padding,
+                        flipped_y,
+                        content_width,
+                    );
+                }
+                PlatformNativePopoverContentItem::IconLabel { icon, text } => {
+                    crate::native_controls::add_native_popover_icon_label(
+                        doc_view,
+                        icon.as_ref(),
+                        text.as_ref(),
+                        padding,
+                        flipped_y,
+                        content_width,
+                    );
+                }
+                PlatformNativePopoverContentItem::Button { title, on_click } => {
+                    let button = crate::native_controls::add_native_popover_button(
+                        doc_view,
+                        title.as_ref(),
+                        padding,
+                        flipped_y,
+                        content_width,
+                        28.0,
+                    );
+                    if let Some(callback) = on_click {
+                        let target =
+                            crate::native_controls::set_native_button_action(button, callback);
+                        button_targets.push(target);
+                    }
+                }
+                PlatformNativePopoverContentItem::Toggle {
+                    text,
+                    checked,
+                    on_change,
+                    enabled,
+                    description,
+                } => {
+                    let target = crate::native_controls::add_native_popover_toggle(
+                        doc_view,
+                        text.as_ref(),
+                        checked,
+                        padding,
+                        flipped_y,
+                        content_width,
+                        enabled,
+                        description
+                            .as_ref()
+                            .map(|value| AsRef::<str>::as_ref(value)),
+                        on_change,
+                    );
+                    if !target.is_null() {
+                        switch_targets.push(target);
+                    }
+                }
+                PlatformNativePopoverContentItem::Checkbox {
+                    text,
+                    checked,
+                    on_change,
+                    enabled,
+                } => {
+                    let target = crate::native_controls::add_native_popover_checkbox(
+                        doc_view,
+                        text.as_ref(),
+                        checked,
+                        padding,
+                        flipped_y,
+                        content_width,
+                        enabled,
+                        on_change,
+                    );
+                    if !target.is_null() {
+                        checkbox_targets.push(target);
+                    }
+                }
+                PlatformNativePopoverContentItem::ProgressBar { value, max, label } => {
+                    crate::native_controls::add_native_popover_progress(
+                        doc_view,
+                        value,
+                        max,
+                        label.as_ref().map(|value| AsRef::<str>::as_ref(value)),
+                        padding,
+                        flipped_y,
+                        content_width,
+                    );
+                }
+                PlatformNativePopoverContentItem::ColorDot {
+                    color,
+                    text,
+                    detail,
+                    on_click,
+                } => {
+                    let target = crate::native_controls::add_native_popover_color_dot(
+                        doc_view,
+                        color,
+                        text.as_ref(),
+                        detail.as_ref().map(|value| AsRef::<str>::as_ref(value)),
+                        padding,
+                        flipped_y,
+                        content_width,
+                        on_click,
+                    );
+                    if !target.is_null() {
+                        button_targets.push(target);
+                    }
+                }
+                PlatformNativePopoverContentItem::ClickableRow {
+                    icon,
+                    text,
+                    detail,
+                    on_click,
+                    enabled,
+                    selected,
+                } => {
+                    let target = crate::native_controls::add_native_popover_clickable_row(
+                        doc_view,
+                        icon.as_ref().map(|value| AsRef::<str>::as_ref(value)),
+                        text.as_ref(),
+                        detail.as_ref().map(|value| AsRef::<str>::as_ref(value)),
+                        padding,
+                        flipped_y,
+                        content_width,
+                        enabled,
+                        selected,
+                        on_click,
+                    );
+                    if !target.is_null() {
+                        hover_row_targets.push(target);
+                    }
+                }
+                PlatformNativePopoverContentItem::Separator => {
+                    crate::native_controls::add_native_popover_separator(
+                        doc_view,
+                        padding,
+                        flipped_y + 5.0,
+                        content_width,
+                    );
+                }
+            }
+
+            top_y += height;
+        }
+
+        if total_content_height > content_bounds.size.height {
+            let clip_view: id = msg_send![scroll_view, contentView];
+            let scroll_point = NSPoint::new(0.0, total_content_height - content_bounds.size.height);
+            let _: () = msg_send![clip_view, scrollToPoint: scroll_point];
+            let _: () = msg_send![scroll_view, reflectScrolledClipView: clip_view];
+        }
+
+        (
+            button_targets,
+            switch_targets,
+            checkbox_targets,
+            hover_row_targets,
+        )
+    }
+}
+
+unsafe fn position_search_suggestion_panel(
+    native_window: id,
+    panel: id,
+    anchor: &PlatformNativeSearchFieldTarget,
+    width: f64,
+    height: f64,
+) -> bool {
+    unsafe {
+        let Some(frame) = search_field_screen_frame(native_window, anchor) else {
+            return false;
+        };
+        let x = frame.origin.x + (frame.size.width - width) / 2.0;
+        let y = frame.origin.y - height;
+        crate::native_controls::set_native_panel_frame(panel, x, y, width, height, false);
+        true
+    }
+}
+
 fn cleanup_popover_state(popover_state: &mut Option<MacPopoverState>) {
     if let Some(state) = popover_state.take() {
         unsafe {
@@ -3961,17 +4418,11 @@ fn cleanup_popover_state(popover_state: &mut Option<MacPopoverState>) {
 fn cleanup_panel_state(panel_state: &mut Option<MacPanelState>) {
     if let Some(state) = panel_state.take() {
         unsafe {
-            for target in &state.button_targets {
-                crate::native_controls::release_native_button_target(*target);
-            }
-            for target in &state.switch_targets {
-                crate::native_controls::release_native_popover_switch_target(*target);
-            }
-            for target in &state.checkbox_targets {
-                crate::native_controls::release_native_popover_checkbox_target(*target);
-            }
-            for target in &state.hover_row_targets {
-                crate::native_controls::release_native_hover_row_target(*target);
+            let mut state = state;
+            release_panel_targets(&mut state);
+            let parent_window: id = msg_send![state.panel, parentWindow];
+            if parent_window != nil {
+                let _: () = msg_send![parent_window, removeChildWindow: state.panel];
             }
             crate::native_controls::release_native_panel(state.panel, state.delegate_ptr);
         }
@@ -4166,6 +4617,31 @@ unsafe fn find_content_search_field_by_identifier(view: id, identifier: &str) ->
     }
 }
 
+unsafe fn find_content_view_by_identifier(view: id, identifier: &str) -> id {
+    unsafe {
+        if view == nil {
+            return nil;
+        }
+
+        let view_identifier: id = msg_send![view, identifier];
+        if view_identifier != nil && ns_string_to_owned(view_identifier) == identifier {
+            return view;
+        }
+
+        let subviews: id = msg_send![view, subviews];
+        let count: NSUInteger = msg_send![subviews, count];
+        for index in 0..count {
+            let child: id = msg_send![subviews, objectAtIndex: index];
+            let found = find_content_view_by_identifier(child, identifier);
+            if found != nil {
+                return found;
+            }
+        }
+
+        nil
+    }
+}
+
 unsafe fn focus_content_search_field(native_window: id, identifier: &str, select_all: bool) {
     unsafe {
         let content_view: id = msg_send![native_window, contentView];
@@ -4193,12 +4669,91 @@ unsafe fn focus_toolbar_search_field(native_window: id, identifier: &str, select
                 continue;
             }
 
+            let is_search_toolbar_item: BOOL =
+                msg_send![item, isKindOfClass: class!(NSSearchToolbarItem)];
+            if is_search_toolbar_item == YES {
+                let search_field =
+                    crate::native_controls::get_native_search_toolbar_item_search_field(item);
+                crate::native_controls::begin_native_search_toolbar_item_interaction(item);
+                focus_search_field(native_window, search_field, select_all);
+                return;
+            }
+
             let view: id = msg_send![item, view];
             let is_search_field: BOOL = msg_send![view, isKindOfClass: class!(NSSearchField)];
             if is_search_field == YES {
                 focus_search_field(native_window, view, select_all);
             }
             return;
+        }
+    }
+}
+
+unsafe fn find_toolbar_item_anchor_view(native_window: id, identifier: &str) -> id {
+    unsafe {
+        let toolbar: id = msg_send![native_window, toolbar];
+        if toolbar == nil {
+            return nil;
+        }
+
+        let items: id = msg_send![toolbar, items];
+        let count: NSUInteger = msg_send![items, count];
+        for index in 0..count {
+            let item: id = msg_send![items, objectAtIndex: index];
+            let item_identifier: id = msg_send![item, itemIdentifier];
+            if item_identifier == nil || ns_string_to_owned(item_identifier) != identifier {
+                continue;
+            }
+
+            let is_search_toolbar_item: BOOL =
+                msg_send![item, isKindOfClass: class!(NSSearchToolbarItem)];
+            if is_search_toolbar_item == YES {
+                return crate::native_controls::get_native_search_toolbar_item_search_field(item);
+            }
+
+            return msg_send![item, view];
+        }
+
+        nil
+    }
+}
+
+unsafe fn view_screen_frame(view: id) -> Option<NSRect> {
+    unsafe {
+        if view == nil {
+            return None;
+        }
+
+        let window: id = msg_send![view, window];
+        if window == nil {
+            return None;
+        }
+
+        let bounds: NSRect = msg_send![view, bounds];
+        let window_rect: NSRect = msg_send![view, convertRect: bounds toView: nil];
+        let screen_rect: NSRect = msg_send![window, convertRectToScreen: window_rect];
+        Some(screen_rect)
+    }
+}
+
+unsafe fn search_field_screen_frame(
+    native_window: id,
+    target: &PlatformNativeSearchFieldTarget,
+) -> Option<NSRect> {
+    unsafe {
+        match target {
+            PlatformNativeSearchFieldTarget::ToolbarItem(identifier) => {
+                let view = find_toolbar_item_anchor_view(native_window, identifier.as_ref());
+                view_screen_frame(view)
+            }
+            PlatformNativeSearchFieldTarget::ContentView(identifier) => {
+                let content_view: id = msg_send![native_window, contentView];
+                if content_view == nil {
+                    return None;
+                }
+                let view = find_content_view_by_identifier(content_view, identifier.as_ref());
+                view_screen_frame(view)
+            }
         }
     }
 }
@@ -4525,12 +5080,27 @@ unsafe fn create_toolbar_search_item(
         };
         let placeholder = item.placeholder.clone();
         let text = item.text.clone();
-        let min_width = item.min_width;
-        let max_width = item.max_width;
+        let preferred_width_for_search_field = item.preferred_width_for_search_field;
+        let resigns_first_responder_with_cancel = item.resigns_first_responder_with_cancel;
 
-        let toolbar_item: id = msg_send![class!(NSToolbarItem), alloc];
-        let toolbar_item: id = msg_send![toolbar_item, initWithItemIdentifier: identifier];
-        let field = crate::native_controls::create_native_search_field(placeholder.as_ref());
+        let toolbar_item = crate::native_controls::create_native_search_toolbar_item(identifier);
+        let field =
+            crate::native_controls::get_native_search_toolbar_item_search_field(toolbar_item);
+        crate::native_controls::set_native_search_toolbar_item_preferred_width(
+            toolbar_item,
+            preferred_width_for_search_field.to_f64(),
+        );
+        crate::native_controls::set_native_search_toolbar_item_resigns_first_responder_with_cancel(
+            toolbar_item,
+            resigns_first_responder_with_cancel,
+        );
+        let label = if placeholder.is_empty() {
+            "Search"
+        } else {
+            placeholder.as_ref()
+        };
+        let _: () = msg_send![toolbar_item, setLabel: ns_string(label)];
+        crate::native_controls::set_native_search_field_placeholder(field, placeholder.as_ref());
         crate::native_controls::set_native_search_field_string_value(field, &text);
 
         let state_ptr: *mut c_void = *this.get_ivar(TOOLBAR_STATE_IVAR);
@@ -4623,23 +5193,9 @@ unsafe fn create_toolbar_search_item(
         };
         let delegate = crate::native_controls::set_native_text_field_delegate(field, callbacks);
 
-        let frame: NSRect = msg_send![field, frame];
-        let min_size = NSSize {
-            width: min_width.to_f64(),
-            height: frame.size.height,
-        };
-        let max_size = NSSize {
-            width: max_width.to_f64(),
-            height: frame.size.height,
-        };
-
-        let _: () = msg_send![toolbar_item, setMinSize: min_size];
-        let _: () = msg_send![toolbar_item, setMaxSize: max_size];
-        let _: () = msg_send![toolbar_item, setView: field];
-
         state
             .resources
-            .push(ToolbarNativeResource::SearchField { field, delegate });
+            .push(ToolbarNativeResource::SearchField { delegate });
 
         msg_send![toolbar_item, autorelease]
     }

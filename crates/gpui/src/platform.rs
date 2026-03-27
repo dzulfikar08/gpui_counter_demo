@@ -8,7 +8,6 @@ pub mod native_controls;
 #[expect(missing_docs)]
 pub mod layer_shell;
 
-
 #[cfg(any(test, feature = "test-support"))]
 mod test;
 
@@ -33,11 +32,11 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -48,6 +47,7 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -57,7 +57,6 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
-use scheduler::Instant;
 use std::time::Duration;
 use std::{
     fmt::{self, Debug},
@@ -658,6 +657,8 @@ pub struct PlatformNativeToolbarSearchFieldItem {
     pub text: SharedString,
     pub min_width: Pixels,
     pub max_width: Pixels,
+    pub preferred_width_for_search_field: Pixels,
+    pub resigns_first_responder_with_cancel: bool,
     pub on_change: Option<Box<dyn Fn(String)>>,
     pub on_submit: Option<Box<dyn Fn(String)>>,
     pub on_move_up: Option<Box<dyn Fn()>>,
@@ -759,7 +760,7 @@ pub enum PlatformNativePopoverBehavior {
 
 #[allow(missing_docs)]
 impl PlatformNativePopoverBehavior {
-        pub fn to_raw(self) -> i64 {
+    pub fn to_raw(self) -> i64 {
         match self {
             Self::ApplicationDefined => 0,
             Self::Transient => 1,
@@ -847,6 +848,7 @@ pub enum PlatformNativePopoverContentItem {
 #[allow(missing_docs)]
 pub enum PlatformNativePopoverAnchor {
     ToolbarItem(SharedString),
+    ContentElement(SharedString),
 }
 
 // =============================================================================
@@ -898,6 +900,15 @@ pub struct PlatformNativePanel {
     pub has_shadow: bool,
     pub corner_radius: f64,
     pub material: Option<PlatformNativePanelMaterial>,
+    pub on_close: Option<Box<dyn Fn()>>,
+    pub content_items: Vec<PlatformNativePopoverContentItem>,
+    pub hosted_surface_view: Option<*mut std::ffi::c_void>,
+}
+
+#[allow(missing_docs)]
+pub struct PlatformNativeSearchSuggestionMenu {
+    pub width: f64,
+    pub height: f64,
     pub on_close: Option<Box<dyn Fn()>>,
     pub content_items: Vec<PlatformNativePopoverContentItem>,
     pub hosted_surface_view: Option<*mut std::ffi::c_void>,
@@ -1043,14 +1054,25 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn dismiss_native_popover(&self) {}
 
-    fn show_native_panel(
+    fn show_native_panel(&self, _panel: PlatformNativePanel, _anchor: PlatformNativePanelAnchor) {}
+
+    fn dismiss_native_panel(&self) {}
+
+    fn show_native_search_suggestion_menu(
         &self,
-        _panel: PlatformNativePanel,
-        _anchor: PlatformNativePanelAnchor,
+        _menu: PlatformNativeSearchSuggestionMenu,
+        _anchor: PlatformNativeSearchFieldTarget,
     ) {
     }
 
-    fn dismiss_native_panel(&self) {}
+    fn update_native_search_suggestion_menu(
+        &self,
+        _menu: PlatformNativeSearchSuggestionMenu,
+        _anchor: PlatformNativeSearchFieldTarget,
+    ) {
+    }
+
+    fn dismiss_native_search_suggestion_menu(&self) {}
 
     fn blur_native_field_editor(&self) {}
 
@@ -1230,7 +1252,11 @@ pub trait PlatformTextSystem: Send + Sync {
 /// A renderer for headless test windows that can produce raster output.
 pub trait PlatformHeadlessRenderer: Send {
     /// Render a scene into an RGBA image.
-    fn render_scene_to_image(&mut self, _scene: &Scene, _size: Size<DevicePixels>) -> Result<RgbaImage>;
+    fn render_scene_to_image(
+        &mut self,
+        _scene: &Scene,
+        _size: Size<DevicePixels>,
+    ) -> Result<RgbaImage>;
     /// Return the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
 }
