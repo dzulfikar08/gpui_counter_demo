@@ -928,6 +928,15 @@ pub struct HostedContentConfig {
     pub manage_toolbar: bool,
 }
 
+/// Target pane for a secondary hosted GPUI surface inside a native window host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostedSurfaceTarget {
+    /// Attach the surface to the leading sidebar pane.
+    Sidebar,
+    /// Attach the surface to the trailing inspector pane.
+    Inspector,
+}
+
 // =============================================================================
 // Native alert types
 // =============================================================================
@@ -1112,6 +1121,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         &self,
         _host_view: *mut std::ffi::c_void,
         _surface_view: *mut std::ffi::c_void,
+        _target: HostedSurfaceTarget,
     ) {
     }
 

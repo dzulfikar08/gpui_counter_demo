@@ -33,11 +33,13 @@ struct SidebarHostData {
     split_view: id,
     sidebar_item: id,
     content_item: id,
+    inspector_item: id,
     scroll_view: id,
     table_view: id,
     detail_label: id,
     detail_content_view: id,
     sidebar_container: id,
+    inspector_container: id,
     window: id,
     embedded_content_view: id,
     previous_content_view_controller: id,
@@ -55,6 +57,7 @@ struct SidebarHostData {
     sidebar_on_trailing: bool,
     uses_inspector_behavior: bool,
     embed_in_sidebar: bool,
+    has_inspector: bool,
 }
 
 struct SidebarCallbacks {
@@ -246,36 +249,6 @@ fn clamped_sidebar_width(split_view: id, width: f64, min_width: f64, max_width: 
     }
 }
 
-unsafe fn ns_string_equals(lhs: id, rhs: id) -> bool {
-    unsafe {
-        if lhs == nil || rhs == nil {
-            return false;
-        }
-        let eq: i8 = msg_send![lhs, isEqualToString: rhs];
-        eq != 0
-    }
-}
-
-unsafe fn toolbar_has_identifier(toolbar: id, identifier: id) -> bool {
-    unsafe {
-        if toolbar == nil || identifier == nil {
-            return false;
-        }
-        let items: id = msg_send![toolbar, items];
-        let count: u64 = msg_send![items, count];
-        for i in 0..count {
-            let item: id = msg_send![items, objectAtIndex: i];
-            if item != nil {
-                let item_identifier: id = msg_send![item, itemIdentifier];
-                if ns_string_equals(item_identifier, identifier) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-}
-
 unsafe fn toolbar_toggle_identifier(uses_inspector_behavior: bool) -> Option<id> {
     unsafe {
         use super::super::ns_string;
@@ -300,7 +273,11 @@ unsafe fn toolbar_tracking_separator_identifier(uses_inspector_behavior: bool) -
     }
 }
 
-unsafe fn ensure_sidebar_toggle_items(toolbar: id, uses_inspector_behavior: bool) {
+unsafe fn ensure_sidebar_toggle_items(
+    toolbar: id,
+    show_sidebar_toggle: bool,
+    show_inspector_toggle: bool,
+) {
     unsafe {
         if toolbar == nil {
             return;
@@ -313,35 +290,47 @@ unsafe fn ensure_sidebar_toggle_items(toolbar: id, uses_inspector_behavior: bool
         }
 
         let flexible = toolbar_flexible_space_identifier();
-        let toggle = toolbar_toggle_identifier(uses_inspector_behavior);
-        let separator = toolbar_tracking_separator_identifier(uses_inspector_behavior);
 
-        if !toolbar_has_identifier(toolbar, flexible) {
-            let _: () = msg_send![toolbar, insertItemWithItemIdentifier: flexible atIndex: 0u64];
-        }
-        if let Some(toggle) = toggle {
-            if !toolbar_has_identifier(toolbar, toggle) {
-                let index: u64 = if toolbar_has_identifier(toolbar, flexible) {
-                    1
-                } else {
-                    0
-                };
-                let _: () = msg_send![toolbar, insertItemWithItemIdentifier: toggle atIndex: index];
+        let mut wanted = Vec::new();
+        if show_sidebar_toggle {
+            wanted.push(toolbar_toggle_sidebar_identifier());
+            if let Some(separator) = toolbar_tracking_separator_identifier(false) {
+                wanted.push(separator);
             }
         }
-        if let Some(separator) = separator {
-            if !toolbar_has_identifier(toolbar, separator) {
+
+        if show_sidebar_toggle && show_inspector_toggle {
+            wanted.push(flexible);
+        }
+
+        if show_inspector_toggle {
+            if let Some(separator) = toolbar_tracking_separator_identifier(true) {
+                wanted.push(separator);
+            }
+            wanted.push(flexible);
+            if let Some(toggle) = toolbar_toggle_identifier(true) {
+                wanted.push(toggle);
+            }
+        }
+
+        let items: id = msg_send![toolbar, items];
+        let count: u64 = if items != nil {
+            msg_send![items, count]
+        } else {
+            0
+        };
+        if count == 0 {
+            for identifier in wanted.into_iter() {
                 let items: id = msg_send![toolbar, items];
-                let count: u64 = if items != nil {
+                let index: u64 = if items != nil {
                     msg_send![items, count]
                 } else {
                     0
                 };
-                let insert_index = count.min(2);
                 let _: () = msg_send![
                     toolbar,
-                    insertItemWithItemIdentifier: separator
-                    atIndex: insert_index
+                    insertItemWithItemIdentifier: identifier
+                    atIndex: index
                 ];
             }
         }
@@ -533,12 +522,22 @@ pub(crate) unsafe fn create_sidebar(
     min_width: f64,
     max_width: f64,
     embed_in_sidebar: bool,
+    has_inspector: bool,
+    inspector_width: f64,
+    inspector_min_width: f64,
+    inspector_max_width: f64,
 ) -> id {
     unsafe {
         use super::super::ns_string;
 
+        let sidebar_on_trailing = sidebar_on_trailing && !has_inspector;
         let (min_width, max_width) = clamp_min_max(min_width, max_width);
+        let (inspector_min_width, inspector_max_width) =
+            clamp_min_max(inspector_min_width, inspector_max_width);
         let initial_width = sidebar_width.max(min_width).min(max_width);
+        let initial_inspector_width = inspector_width
+            .max(inspector_min_width)
+            .min(inspector_max_width);
 
         let host_view: id = msg_send![SIDEBAR_HOST_VIEW_CLASS, alloc];
         let host_view: id = msg_send![host_view, initWithFrame: NSRect::new(
@@ -793,6 +792,35 @@ pub(crate) unsafe fn create_sidebar(
             nil
         };
 
+        let inspector_container: id = if has_inspector {
+            let wrapper: id = msg_send![class!(NSView), alloc];
+            let wrapper: id = msg_send![wrapper, initWithFrame: NSRect::new(
+                NSPoint::new(0.0, 0.0),
+                NSSize::new(initial_inspector_width, 420.0),
+            )];
+            let _: () =
+                msg_send![wrapper, setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+
+            if !has_liquid_glass {
+                let vfx: id = msg_send![class!(NSVisualEffectView), alloc];
+                let vfx: id = msg_send![vfx, initWithFrame: NSRect::new(
+                    NSPoint::new(0.0, 0.0),
+                    NSSize::new(initial_inspector_width, 420.0),
+                )];
+                NSVisualEffectView::setMaterial_(vfx, NSVisualEffectMaterial::Sidebar);
+                NSVisualEffectView::setBlendingMode_(vfx, NSVisualEffectBlendingMode::BehindWindow);
+                NSVisualEffectView::setState_(vfx, NSVisualEffectState::FollowsWindowActiveState);
+                let _: () =
+                    msg_send![vfx, setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+                let _: () = msg_send![wrapper, addSubview: vfx positioned: -1i64 relativeTo: nil];
+                let _: () = msg_send![vfx, release];
+            }
+
+            wrapper
+        } else {
+            nil
+        };
+
         let sidebar_vc: id = msg_send![class!(NSViewController), alloc];
         let sidebar_vc: id = msg_send![sidebar_vc, init];
         let _: () = msg_send![sidebar_vc, setView: sidebar_container];
@@ -800,6 +828,15 @@ pub(crate) unsafe fn create_sidebar(
         let content_vc: id = msg_send![class!(NSViewController), alloc];
         let content_vc: id = msg_send![content_vc, init];
         let _: () = msg_send![content_vc, setView: content_vc_view];
+
+        let inspector_vc: id = if has_inspector {
+            let inspector_vc: id = msg_send![class!(NSViewController), alloc];
+            let inspector_vc: id = msg_send![inspector_vc, init];
+            let _: () = msg_send![inspector_vc, setView: inspector_container];
+            inspector_vc
+        } else {
+            nil
+        };
 
         let sidebar_item: id = if uses_inspector_behavior {
             msg_send![split_view_item_class, inspectorWithViewController: sidebar_vc]
@@ -816,12 +853,24 @@ pub(crate) unsafe fn create_sidebar(
             msg_send![split_view_item_class, splitViewItemWithViewController: content_vc];
         configure_content_item(content_item);
 
+        let inspector_item: id = if has_inspector {
+            let inspector_item: id =
+                msg_send![split_view_item_class, inspectorWithViewController: inspector_vc];
+            configure_inspector_item(inspector_item, inspector_min_width, inspector_max_width);
+            inspector_item
+        } else {
+            nil
+        };
+
         if sidebar_on_trailing {
             let _: () = msg_send![split_view_controller, addSplitViewItem: content_item];
             let _: () = msg_send![split_view_controller, addSplitViewItem: sidebar_item];
         } else {
             let _: () = msg_send![split_view_controller, addSplitViewItem: sidebar_item];
             let _: () = msg_send![split_view_controller, addSplitViewItem: content_item];
+        }
+        if inspector_item != nil {
+            let _: () = msg_send![split_view_controller, addSplitViewItem: inspector_item];
         }
 
         // Enable safe area inset propagation so the sidebar overlap is
@@ -854,11 +903,13 @@ pub(crate) unsafe fn create_sidebar(
             split_view,
             sidebar_item,
             content_item,
+            inspector_item,
             scroll_view: scroll,
             table_view: table,
             detail_label,
             detail_content_view: content_view,
             sidebar_container,
+            inspector_container,
             window: nil,
             embedded_content_view: nil,
             previous_content_view_controller: nil,
@@ -876,16 +927,30 @@ pub(crate) unsafe fn create_sidebar(
             sidebar_on_trailing,
             uses_inspector_behavior,
             embed_in_sidebar,
+            has_inspector,
         };
         let host_data_ptr = Box::into_raw(Box::new(host_data)) as *mut c_void;
         (*(host_view as *mut Object)).set_ivar::<*mut c_void>(HOST_DATA_IVAR, host_data_ptr);
 
         let _: () = msg_send![sidebar_vc, release];
         let _: () = msg_send![content_vc, release];
+        if inspector_vc != nil {
+            let _: () = msg_send![inspector_vc, release];
+        }
         let _: () = msg_send![sidebar_container, release];
+        if inspector_container != nil {
+            let _: () = msg_send![inspector_container, release];
+        }
         let _: () = msg_send![content_view, release];
 
         set_sidebar_width(host_view, initial_width, min_width, max_width);
+        set_inspector_collapsed(
+            host_view,
+            true,
+            initial_inspector_width,
+            inspector_min_width,
+            inspector_max_width,
+        );
         host_view
     }
 }
@@ -1215,9 +1280,13 @@ pub(crate) unsafe fn configure_sidebar_window(
                 if active_toolbar != host_data.sidebar_toolbar {
                     let _: () = msg_send![window, setToolbar: host_data.sidebar_toolbar];
                 }
+                let show_sidebar_toggle = !host_data.sidebar_on_trailing || host_data.has_inspector;
+                let show_inspector_toggle =
+                    host_data.has_inspector || host_data.uses_inspector_behavior;
                 ensure_sidebar_toggle_items(
                     host_data.sidebar_toolbar,
-                    host_data.uses_inspector_behavior,
+                    show_sidebar_toggle,
+                    show_inspector_toggle,
                 );
             }
         } else if host_data.sidebar_toolbar != nil {
@@ -1292,6 +1361,48 @@ pub(crate) unsafe fn set_sidebar_collapsed(
     }
 }
 
+pub(crate) unsafe fn set_inspector_collapsed(
+    host_view: id,
+    collapsed: bool,
+    expanded_width: f64,
+    min_width: f64,
+    max_width: f64,
+) {
+    unsafe {
+        let Some(host_data) = host_data_mut(host_view) else {
+            return;
+        };
+        if host_data.inspector_item == nil {
+            return;
+        }
+
+        let (min_width, max_width) = clamp_min_max(min_width, max_width);
+        let _: () = msg_send![host_data.inspector_item, setMinimumThickness: min_width];
+        let _: () = msg_send![host_data.inspector_item, setMaximumThickness: max_width];
+        let _: () = msg_send![host_data.inspector_item, setCollapsed: collapsed as i8];
+
+        if !collapsed {
+            let width =
+                clamped_sidebar_width(host_data.split_view, expanded_width, min_width, max_width);
+            let frame: NSRect = msg_send![host_data.split_view, frame];
+            let divider_index = if host_data.sidebar_item != nil {
+                1i64
+            } else {
+                0i64
+            };
+            let divider_position = (frame.size.width - width).max(0.0);
+            let _: () = msg_send![
+                host_data.split_view,
+                setPosition: divider_position
+                ofDividerAtIndex: divider_index
+            ];
+            if host_data.window != nil {
+                let _: () = msg_send![host_data.split_view, adjustSubviews];
+            }
+        }
+    }
+}
+
 pub(crate) unsafe fn set_sidebar_items(
     host_view: id,
     items: &[&str],
@@ -1357,6 +1468,7 @@ pub(crate) unsafe fn sidebar_requires_rebuild(
     host_view: id,
     sidebar_on_trailing: bool,
     embed_in_sidebar: bool,
+    has_inspector: bool,
 ) -> bool {
     unsafe {
         let Some(host_data) = host_data_mut(host_view) else {
@@ -1365,6 +1477,7 @@ pub(crate) unsafe fn sidebar_requires_rebuild(
 
         host_data.sidebar_on_trailing != sidebar_on_trailing
             || host_data.embed_in_sidebar != embed_in_sidebar
+            || host_data.has_inspector != has_inspector
     }
 }
 
@@ -1687,6 +1800,74 @@ pub(crate) unsafe fn embed_sidebar_surface_view(host_view: id, surface_view: id)
 
         // Make the Metal layer non-opaque so the NSVisualEffectView vibrancy
         // shows through transparent areas of the GPUI content.
+        let layer: id = msg_send![surface_view, layer];
+        if layer != nil {
+            let _: () = msg_send![layer, setOpaque: 0i8];
+        }
+    }
+}
+
+/// Embed a secondary view into the trailing inspector pane using Auto Layout
+/// constraints pinned below the titlebar safe area.
+pub(crate) unsafe fn embed_inspector_surface_view(host_view: id, surface_view: id) {
+    unsafe {
+        if host_view == nil || surface_view == nil {
+            return;
+        }
+
+        let Some(host_data) = host_data_mut(host_view) else {
+            return;
+        };
+
+        let target_pane = host_data.inspector_container;
+        if target_pane == nil {
+            return;
+        }
+
+        let current_superview: id = msg_send![surface_view, superview];
+        if current_superview == target_pane {
+            return;
+        }
+        if current_superview != nil {
+            let _: () = msg_send![surface_view, removeFromSuperview];
+        }
+
+        let _: () = msg_send![
+            surface_view,
+            setTranslatesAutoresizingMaskIntoConstraints: 0i8
+        ];
+        let _: () = msg_send![target_pane, addSubview: surface_view];
+
+        let has_safe_area: bool =
+            msg_send![target_pane, respondsToSelector: sel!(safeAreaLayoutGuide)];
+        let guide_top: id = if has_safe_area {
+            let guide: id = msg_send![target_pane, safeAreaLayoutGuide];
+            msg_send![guide, topAnchor]
+        } else {
+            msg_send![target_pane, topAnchor]
+        };
+
+        let pane_leading: id = msg_send![target_pane, leadingAnchor];
+        let pane_trailing: id = msg_send![target_pane, trailingAnchor];
+        let pane_bottom: id = msg_send![target_pane, bottomAnchor];
+
+        let view_top: id = msg_send![surface_view, topAnchor];
+        let view_leading: id = msg_send![surface_view, leadingAnchor];
+        let view_trailing: id = msg_send![surface_view, trailingAnchor];
+        let view_bottom: id = msg_send![surface_view, bottomAnchor];
+
+        let c1: id = msg_send![view_top, constraintEqualToAnchor: guide_top];
+        let c2: id = msg_send![view_leading, constraintEqualToAnchor: pane_leading];
+        let c3: id = msg_send![view_trailing, constraintEqualToAnchor: pane_trailing];
+        let c4: id = msg_send![view_bottom, constraintEqualToAnchor: pane_bottom];
+
+        let _: () = msg_send![c1, setActive: 1i8];
+        let _: () = msg_send![c2, setActive: 1i8];
+        let _: () = msg_send![c3, setActive: 1i8];
+        let _: () = msg_send![c4, setActive: 1i8];
+
+        let _: () = msg_send![target_pane, layoutSubtreeIfNeeded];
+
         let layer: id = msg_send![surface_view, layer];
         if layer != nil {
             let _: () = msg_send![layer, setOpaque: 0i8];

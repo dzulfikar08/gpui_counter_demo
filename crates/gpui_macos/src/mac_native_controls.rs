@@ -1371,6 +1371,7 @@ impl PlatformNativeControls for MacNativeControls {
                     state.view() as id,
                     sidebar_on_trailing,
                     config.embed_in_host,
+                    config.has_inspector,
                 )
             {
                 let old_state = mem::take(state);
@@ -1391,6 +1392,13 @@ impl PlatformNativeControls for MacNativeControls {
                     config.expanded_width,
                     config.min_width,
                     config.max_width,
+                );
+                native_controls::set_inspector_collapsed(
+                    view,
+                    config.inspector_collapsed,
+                    config.inspector_width,
+                    config.inspector_min_width,
+                    config.inspector_max_width,
                 );
                 native_controls::release_sidebar_target(state.target());
                 let target = native_controls::set_sidebar_items(
@@ -1428,6 +1436,10 @@ impl PlatformNativeControls for MacNativeControls {
                     config.min_width,
                     config.max_width,
                     config.embed_in_host,
+                    config.has_inspector,
+                    config.inspector_width,
+                    config.inspector_min_width,
+                    config.inspector_max_width,
                 );
                 native_controls::set_sidebar_collapsed(
                     view,
@@ -1435,6 +1447,13 @@ impl PlatformNativeControls for MacNativeControls {
                     config.expanded_width,
                     config.min_width,
                     config.max_width,
+                );
+                native_controls::set_inspector_collapsed(
+                    view,
+                    config.inspector_collapsed,
+                    config.inspector_width,
+                    config.inspector_min_width,
+                    config.inspector_max_width,
                 );
                 let target = native_controls::set_sidebar_items(
                     view,

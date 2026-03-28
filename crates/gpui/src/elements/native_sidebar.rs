@@ -69,6 +69,11 @@ pub fn native_sidebar(id: impl Into<ElementId>, items: &[impl AsRef<str>]) -> Na
         collapsed: false,
         embed_in_sidebar: false,
         sidebar_view: None,
+        inspector_view: None,
+        inspector_width: 320.0,
+        min_inspector_width: 220.0,
+        max_inspector_width: 480.0,
+        inspector_collapsed: true,
         manage_window_chrome: true,
         manage_toolbar: true,
         on_select: None,
@@ -94,6 +99,13 @@ pub struct NativeSidebar {
     /// When set, a secondary GpuiSurface renders this view in the sidebar pane
     /// while the main GPUI content view stays in the detail pane.
     sidebar_view: Option<AnyView>,
+    /// When set, a secondary GpuiSurface renders this view in the trailing
+    /// inspector pane.
+    inspector_view: Option<AnyView>,
+    inspector_width: f64,
+    min_inspector_width: f64,
+    max_inspector_width: f64,
+    inspector_collapsed: bool,
     /// When `true` (default), GPUI configures native window chrome (toolbar and
     /// titlebar attributes) for AppKit-style sidebar behavior.
     ///
@@ -179,6 +191,40 @@ impl NativeSidebar {
         self
     }
 
+    /// Sets a view to render in the trailing inspector pane via a secondary
+    /// GpuiSurface.
+    pub fn inspector_view<V: Render>(mut self, view: crate::Entity<V>) -> Self {
+        self.inspector_view = Some(AnyView::from(view));
+        self
+    }
+
+    /// Sets inspector width in pixels.
+    pub fn inspector_width(mut self, inspector_width: f64) -> Self {
+        self.inspector_width = inspector_width.max(160.0);
+        self
+    }
+
+    /// Sets minimum inspector width.
+    pub fn min_inspector_width(mut self, min_inspector_width: f64) -> Self {
+        self.min_inspector_width = min_inspector_width.max(160.0);
+        if self.max_inspector_width < self.min_inspector_width {
+            self.max_inspector_width = self.min_inspector_width;
+        }
+        self
+    }
+
+    /// Sets maximum inspector width.
+    pub fn max_inspector_width(mut self, max_inspector_width: f64) -> Self {
+        self.max_inspector_width = max_inspector_width.max(self.min_inspector_width.max(160.0));
+        self
+    }
+
+    /// Collapses or expands the trailing inspector pane.
+    pub fn inspector_collapsed(mut self, collapsed: bool) -> Self {
+        self.inspector_collapsed = collapsed;
+        self
+    }
+
     /// Controls whether native sidebar integration is allowed to modify window
     /// toolbar/titlebar chrome. Defaults to `true`.
     pub fn manage_window_chrome(mut self, manage_window_chrome: bool) -> Self {
@@ -244,7 +290,9 @@ impl NativeSidebar {
 struct SidebarExtraState {
     native: NativeControlState,
     #[cfg(target_os = "macos")]
-    surface_id: Option<SurfaceId>,
+    sidebar_surface_id: Option<SurfaceId>,
+    #[cfg(target_os = "macos")]
+    inspector_surface_id: Option<SurfaceId>,
     // Tracked config values for state diffing — only call into the platform
     // layer when these actually change. Unconditional updates trigger heavy
     // AppKit layout work during paint that causes reentrancy and hangs.
@@ -256,6 +304,11 @@ struct SidebarExtraState {
     prev_max_width: f64,
     prev_collapsed: bool,
     prev_embed_in_host: bool,
+    prev_has_inspector: bool,
+    prev_inspector_width: f64,
+    prev_min_inspector_width: f64,
+    prev_max_inspector_width: f64,
+    prev_inspector_collapsed: bool,
     prev_header_title: Option<SharedString>,
     prev_header_button_symbols: Vec<SharedString>,
     prev_background_color: Option<(f64, f64, f64, f64)>,
@@ -266,7 +319,9 @@ impl Default for SidebarExtraState {
         Self {
             native: NativeControlState::default(),
             #[cfg(target_os = "macos")]
-            surface_id: None,
+            sidebar_surface_id: None,
+            #[cfg(target_os = "macos")]
+            inspector_surface_id: None,
             prev_items: Vec::new(),
             prev_selected: None,
             prev_side: NativeSidebarSide::Leading,
@@ -275,6 +330,11 @@ impl Default for SidebarExtraState {
             prev_max_width: 0.0,
             prev_collapsed: false,
             prev_embed_in_host: false,
+            prev_has_inspector: false,
+            prev_inspector_width: 0.0,
+            prev_min_inspector_width: 0.0,
+            prev_max_inspector_width: 0.0,
+            prev_inspector_collapsed: true,
             prev_header_title: None,
             prev_header_button_symbols: Vec::new(),
             prev_background_color: None,
@@ -314,7 +374,7 @@ impl Element for NativeSidebar {
         let mut style = Style::default();
         style.refine(&self.style);
 
-        if self.embed_in_sidebar || self.sidebar_view.is_some() {
+        if self.embed_in_sidebar || self.sidebar_view.is_some() || self.inspector_view.is_some() {
             style.size.width =
                 Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(0.0))));
             style.size.height =
@@ -364,13 +424,23 @@ impl Element for NativeSidebar {
         let on_select = self.on_select.take();
         let sidebar_view = self.sidebar_view.take();
         let has_sidebar_view = sidebar_view.is_some();
+        let inspector_view = self.inspector_view.take();
+        let has_inspector = inspector_view.is_some();
         let items = self.items.clone();
         let selected_index = self.selected_index;
-        let side = self.side;
+        let side = if has_inspector {
+            NativeSidebarSide::Leading
+        } else {
+            self.side
+        };
         let sidebar_width = self.sidebar_width.max(120.0);
         let min_sidebar_width = self.min_sidebar_width.max(120.0);
         let max_sidebar_width = self.max_sidebar_width.max(min_sidebar_width);
         let collapsed = self.collapsed;
+        let inspector_width = self.inspector_width.max(160.0);
+        let min_inspector_width = self.min_inspector_width.max(160.0);
+        let max_inspector_width = self.max_inspector_width.max(min_inspector_width);
+        let inspector_collapsed = self.inspector_collapsed;
         let embed_in_sidebar = self.embed_in_sidebar;
         let manage_window_chrome = self.manage_window_chrome;
         let manage_toolbar = self.manage_toolbar;
@@ -433,6 +503,11 @@ impl Element for NativeSidebar {
                 || state.prev_max_width != max_sidebar_width
                 || state.prev_collapsed != collapsed
                 || state.prev_embed_in_host != effective_embed
+                || state.prev_has_inspector != has_inspector
+                || state.prev_inspector_width != inspector_width
+                || state.prev_min_inspector_width != min_inspector_width
+                || state.prev_max_inspector_width != max_inspector_width
+                || state.prev_inspector_collapsed != inspector_collapsed
                 || state.prev_header_title != header_title
                 || state.prev_header_button_symbols != header_button_symbols
                 || state.prev_background_color != sidebar_background_color
@@ -457,6 +532,11 @@ impl Element for NativeSidebar {
                         min_width: min_sidebar_width,
                         max_width: max_sidebar_width,
                         collapsed,
+                        has_inspector,
+                        inspector_width,
+                        inspector_min_width: min_inspector_width,
+                        inspector_max_width: max_inspector_width,
+                        inspector_collapsed,
                         expanded_width: sidebar_width,
                         embed_in_host: effective_embed,
                         items: &item_strs,
@@ -477,6 +557,11 @@ impl Element for NativeSidebar {
                 state.prev_max_width = max_sidebar_width;
                 state.prev_collapsed = collapsed;
                 state.prev_embed_in_host = effective_embed;
+                state.prev_has_inspector = has_inspector;
+                state.prev_inspector_width = inspector_width;
+                state.prev_min_inspector_width = min_inspector_width;
+                state.prev_max_inspector_width = max_inspector_width;
+                state.prev_inspector_collapsed = inspector_collapsed;
                 state.prev_header_title = header_title;
                 state.prev_header_button_symbols = header_button_symbols;
                 state.prev_background_color = sidebar_background_color;
@@ -497,24 +582,44 @@ impl Element for NativeSidebar {
             // Register or update the sidebar surface for dual-surface mode
             #[cfg(target_os = "macos")]
             if let Some(view) = sidebar_view {
-                if let Some(surface_id) = state.surface_id {
+                if let Some(surface_id) = state.sidebar_surface_id {
                     window.update_surface_root_view(surface_id, view);
                 } else {
                     let handle = window.register_surface(view);
-                    window.attach_hosted_surface(state.native.view(), handle.native_view_ptr);
-                    state.surface_id = Some(handle.id);
+                    window.attach_hosted_surface(
+                        state.native.view(),
+                        handle.native_view_ptr,
+                        crate::HostedSurfaceTarget::Sidebar,
+                    );
+                    state.sidebar_surface_id = Some(handle.id);
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            if let Some(view) = inspector_view {
+                if let Some(surface_id) = state.inspector_surface_id {
+                    window.update_surface_root_view(surface_id, view);
+                } else {
+                    let handle = window.register_surface(view);
+                    window.attach_hosted_surface(
+                        state.native.view(),
+                        handle.native_view_ptr,
+                        crate::HostedSurfaceTarget::Inspector,
+                    );
+                    state.inspector_surface_id = Some(handle.id);
                 }
             }
 
             #[cfg(not(target_os = "macos"))]
             {
                 let _ = sidebar_view;
+                let _ = inspector_view;
             }
 
             ((), Some(state))
         });
 
-        if embed_in_sidebar || has_sidebar_view {
+        if embed_in_sidebar || has_sidebar_view || has_inspector {
             let new_size = window.platform_window.content_size();
             if window.viewport_size != new_size {
                 window.viewport_size = new_size;

@@ -4991,9 +4991,10 @@ impl Window {
         &self,
         host_view: *mut std::ffi::c_void,
         surface_view: *mut std::ffi::c_void,
+        target: crate::HostedSurfaceTarget,
     ) {
         self.platform_window
-            .attach_hosted_surface(host_view, surface_view);
+            .attach_hosted_surface(host_view, surface_view, target);
     }
 
     /// Push a native view override. While active, `raw_native_view_ptr()` returns

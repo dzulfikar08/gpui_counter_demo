@@ -1,14 +1,13 @@
 use std::ffi::c_void;
 
 use gpui::native_controls::{
-    AlertConfig, ButtonConfig, ButtonStyle,
-    CheckboxConfig, CollectionViewConfig, ComboBoxCallbacks,
-    ComboBoxConfig, GlassEffectViewConfig, ImageViewConfig, MenuButtonConfig, NativeControlState,
-    NativeMenuItemData, NativeOutlineNodeData, OutlineViewConfig, PanelConfig, PlatformNativeControls, PopupButtonConfig, PopoverConfig,
-    ProgressConfig, SearchFieldConfig, SegmentedControlConfig, SidebarViewConfig, SliderConfig,
-    StackViewConfig, StepperConfig, SwitchConfig, TabViewConfig, TableViewConfig,
-    TextFieldCallbacks, TextFieldConfig, TrackingViewConfig,
-    VisualEffectViewConfig, ALERT_FIRST_BUTTON_RETURN,
+    AlertConfig, ButtonConfig, ButtonStyle, CheckboxConfig, CollectionViewConfig,
+    ComboBoxCallbacks, ComboBoxConfig, GlassEffectViewConfig, ImageViewConfig, MenuButtonConfig,
+    NativeControlState, NativeMenuItemData, NativeOutlineNodeData, OutlineViewConfig, PanelConfig,
+    PlatformNativeControls, PopoverConfig, PopupButtonConfig, ProgressConfig, SearchFieldConfig,
+    SegmentedControlConfig, SidebarViewConfig, SliderConfig, StackViewConfig, StepperConfig,
+    SwitchConfig, TabViewConfig, TableViewConfig, TextFieldCallbacks, TextFieldConfig,
+    TrackingViewConfig, VisualEffectViewConfig, ALERT_FIRST_BUTTON_RETURN,
 };
 use gpui::{Bounds, Pixels};
 use objc::{class, msg_send, sel, sel_impl};
@@ -19,221 +18,269 @@ pub struct IosNativeControls;
 
 pub static IOS_NATIVE_CONTROLS: IosNativeControls = IosNativeControls;
 
-unsafe fn cleanup_button(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_button_target(target);
+unsafe fn cleanup_button(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_button_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_button(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_button(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_checkbox(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_checkbox_target(target);
+unsafe fn cleanup_checkbox(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_checkbox_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_checkbox(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_checkbox(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_switch(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_switch_target(target);
+unsafe fn cleanup_switch(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_switch_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_switch(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_switch(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_slider(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_slider_target(target);
+unsafe fn cleanup_slider(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_slider_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_slider(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_slider(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_stepper(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_stepper_target(target);
+unsafe fn cleanup_stepper(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_stepper_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_stepper(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_stepper(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_segmented_control(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_segmented_target(target);
+unsafe fn cleanup_segmented_control(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_segmented_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_segmented_control(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_segmented_control(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_popup_button(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_popup_target(target);
+unsafe fn cleanup_popup_button(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_popup_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_popup_button(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_popup_button(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_progress(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_progress_indicator(view as id);
+unsafe fn cleanup_progress(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_progress_indicator(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_search_field(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_search_field(view as id);
+unsafe fn cleanup_search_field(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_search_field(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_text_field(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_text_field_delegate(target);
+unsafe fn cleanup_text_field(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_text_field_delegate(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_text_field(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_text_field(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_combo_box(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_combo_box_delegate(target);
+unsafe fn cleanup_combo_box(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_combo_box_delegate(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_combo_box(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_combo_box(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_image_view(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_image_view(view as id);
+unsafe fn cleanup_image_view(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_image_view(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_tab_view(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_tab_view_target(target);
+unsafe fn cleanup_tab_view(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_tab_view_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_tab_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_tab_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_table_view(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_table_target(target);
+unsafe fn cleanup_table_view(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_table_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_table_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_table_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_outline_view(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_outline_target(target);
+unsafe fn cleanup_outline_view(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_outline_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_outline_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_outline_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_collection_view(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_collection_target(target);
+unsafe fn cleanup_collection_view(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_collection_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_collection_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_collection_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_menu_button(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_menu_button_target(target);
+unsafe fn cleanup_menu_button(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_menu_button_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_menu_button(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_menu_button(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_visual_effect_view(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_visual_effect_view(view as id);
+unsafe fn cleanup_visual_effect_view(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_visual_effect_view(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_glass_effect_view(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_glass_effect_view(view as id);
+unsafe fn cleanup_glass_effect_view(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_glass_effect_view(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_tracking_view(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_tracking_view_target(target);
+unsafe fn cleanup_tracking_view(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_tracking_view_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_tracking_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_tracking_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_stack_view(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_stack_view(view as id);
+unsafe fn cleanup_stack_view(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_stack_view(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_sidebar(view: *mut c_void, target: *mut c_void) { unsafe {
-    if !target.is_null() {
-        native_controls::release_native_sidebar_target(target);
+unsafe fn cleanup_sidebar(view: *mut c_void, target: *mut c_void) {
+    unsafe {
+        if !target.is_null() {
+            native_controls::release_native_sidebar_target(target);
+        }
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_native_sidebar_view(view as id);
+        }
     }
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_native_sidebar_view(view as id);
-    }
-}}
+}
 
-unsafe fn cleanup_panel(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_object(view as id);
+unsafe fn cleanup_panel(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_object(view as id);
+        }
     }
-}}
+}
 
-unsafe fn cleanup_popover(view: *mut c_void, _target: *mut c_void) { unsafe {
-    if !view.is_null() {
-        native_controls::remove_native_view_from_parent(view as id);
-        native_controls::release_object(view as id);
+unsafe fn cleanup_popover(view: *mut c_void, _target: *mut c_void) {
+    unsafe {
+        if !view.is_null() {
+            native_controls::remove_native_view_from_parent(view as id);
+            native_controls::release_object(view as id);
+        }
     }
-}}
+}
 
 fn ensure_attached(
     state: &NativeControlState,
@@ -289,7 +336,8 @@ fn into_combo_box_callbacks(
 }
 
 fn flatten_menu_items(items: &[NativeMenuItemData]) -> Vec<&str> {
-    items.iter()
+    items
+        .iter()
         .filter_map(|item| match item {
             NativeMenuItemData::Action { title, .. } => Some(title.as_str()),
             NativeMenuItemData::Submenu { title, .. } => Some(title.as_str()),
@@ -346,13 +394,7 @@ fn normalized_progress(value: f64, min: f64, max: f64) -> f64 {
     }
 }
 
-unsafe fn set_view_frame(
-    view: id,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-) {
+unsafe fn set_view_frame(view: id, x: f64, y: f64, width: f64, height: f64) {
     let frame: ((f64, f64), (f64, f64)) = ((x, y), (width, height));
     let _: () = msg_send![view, setFrame: frame];
 }
@@ -383,11 +425,13 @@ impl PlatformNativeControls for IosNativeControls {
         }
     }
 
-    unsafe fn remove_from_parent(&self, state: &NativeControlState) { unsafe {
-        if !state.view().is_null() {
-            native_controls::remove_native_view_from_parent(state.view() as id);
+    unsafe fn remove_from_parent(&self, state: &NativeControlState) {
+        unsafe {
+            if !state.view().is_null() {
+                native_controls::remove_native_view_from_parent(state.view() as id);
+            }
         }
-    }}
+    }
 
     fn update_button(
         &self,
@@ -662,8 +706,10 @@ impl PlatformNativeControls for IosNativeControls {
                 native_controls::set_native_control_enabled(view, config.enabled);
                 state.set_target(target);
             } else {
-                let view =
-                    native_controls::create_native_popup_button(config.items, config.selected_index);
+                let view = native_controls::create_native_popup_button(
+                    config.items,
+                    config.selected_index,
+                );
                 let target = config
                     .on_select
                     .map(|callback| native_controls::set_native_popup_action(callback))
@@ -671,8 +717,7 @@ impl PlatformNativeControls for IosNativeControls {
                 native_controls::set_native_popup_items(view, config.items, target);
                 native_controls::set_native_popup_selected(view, config.selected_index);
                 native_controls::set_native_control_enabled(view, config.enabled);
-                *state =
-                    NativeControlState::new(view as *mut c_void, target, cleanup_popup_button);
+                *state = NativeControlState::new(view as *mut c_void, target, cleanup_popup_button);
             }
             ensure_attached(state, parent, bounds, scale);
         }
@@ -718,7 +763,11 @@ impl PlatformNativeControls for IosNativeControls {
                     view,
                     config.display_when_stopped,
                 );
-                *state = NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_progress);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_progress,
+                );
             }
             ensure_attached(state, parent, bounds, scale);
         }
@@ -764,8 +813,11 @@ impl PlatformNativeControls for IosNativeControls {
                     config.sends_whole_string,
                 );
                 let _: () = msg_send![view, setUserInteractionEnabled: config.enabled as i8];
-                *state =
-                    NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_search_field);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_search_field,
+                );
             }
             let _ = config.callbacks;
             ensure_attached(state, parent, bounds, scale);
@@ -900,18 +952,18 @@ impl PlatformNativeControls for IosNativeControls {
                 state.view() as id
             } else {
                 let view = native_controls::create_native_image_view();
-                *state =
-                    NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_image_view);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_image_view,
+                );
                 view
             };
 
             if let Some(symbol) = config.sf_symbol {
                 if let Some((_, point_size, weight)) = config.sf_symbol_config {
                     native_controls::set_native_image_view_sf_symbol_config(
-                        view,
-                        symbol,
-                        point_size,
-                        weight,
+                        view, symbol, point_size, weight,
                     );
                 } else {
                     native_controls::set_native_image_view_sf_symbol(view, symbol);
@@ -987,8 +1039,12 @@ impl PlatformNativeControls for IosNativeControls {
             if state.is_initialized() {
                 let view = state.view() as id;
                 native_controls::release_native_table_target(state.target());
-                let target =
-                    native_controls::set_native_table_items(view, rows, config.on_select, config.selected_index);
+                let target = native_controls::set_native_table_items(
+                    view,
+                    rows,
+                    config.on_select,
+                    config.selected_index,
+                );
                 state.set_target(target);
                 if let Some(title) = config.column_title {
                     native_controls::set_native_table_column_title(view, title);
@@ -1006,12 +1062,18 @@ impl PlatformNativeControls for IosNativeControls {
                     native_controls::set_native_table_style(view, style);
                 }
                 if let Some(highlight_style) = config.highlight_style {
-                    native_controls::set_native_table_selection_highlight_style(view, highlight_style);
+                    native_controls::set_native_table_selection_highlight_style(
+                        view,
+                        highlight_style,
+                    );
                 }
                 if let Some(grid_style) = config.grid_style {
                     native_controls::set_native_table_grid_style(view, grid_style);
                 }
-                native_controls::set_native_table_uses_alternating_rows(view, config.alternating_rows);
+                native_controls::set_native_table_uses_alternating_rows(
+                    view,
+                    config.alternating_rows,
+                );
                 native_controls::set_native_table_allows_multiple_selection(
                     view,
                     config.multiple_selection,
@@ -1019,8 +1081,12 @@ impl PlatformNativeControls for IosNativeControls {
                 native_controls::set_native_table_show_header(view, config.show_header);
             } else {
                 let view = native_controls::create_native_table_view();
-                let target =
-                    native_controls::set_native_table_items(view, rows, config.on_select, config.selected_index);
+                let target = native_controls::set_native_table_items(
+                    view,
+                    rows,
+                    config.on_select,
+                    config.selected_index,
+                );
                 if let Some(title) = config.column_title {
                     native_controls::set_native_table_column_title(view, title);
                 }
@@ -1037,12 +1103,18 @@ impl PlatformNativeControls for IosNativeControls {
                     native_controls::set_native_table_style(view, style);
                 }
                 if let Some(highlight_style) = config.highlight_style {
-                    native_controls::set_native_table_selection_highlight_style(view, highlight_style);
+                    native_controls::set_native_table_selection_highlight_style(
+                        view,
+                        highlight_style,
+                    );
                 }
                 if let Some(grid_style) = config.grid_style {
                     native_controls::set_native_table_grid_style(view, grid_style);
                 }
-                native_controls::set_native_table_uses_alternating_rows(view, config.alternating_rows);
+                native_controls::set_native_table_uses_alternating_rows(
+                    view,
+                    config.alternating_rows,
+                );
                 native_controls::set_native_table_allows_multiple_selection(
                     view,
                     config.multiple_selection,
@@ -1131,7 +1203,8 @@ impl PlatformNativeControls for IosNativeControls {
                     config.selected,
                 );
                 state.set_target(target);
-                let item_width = (config.width - ((config.columns.saturating_sub(1)) as f64 * config.spacing))
+                let item_width = (config.width
+                    - ((config.columns.saturating_sub(1)) as f64 * config.spacing))
                     / config.columns.max(1) as f64;
                 native_controls::set_native_collection_layout(
                     view,
@@ -1147,7 +1220,8 @@ impl PlatformNativeControls for IosNativeControls {
                     config.on_select,
                     config.selected,
                 );
-                let item_width = (config.width - ((config.columns.saturating_sub(1)) as f64 * config.spacing))
+                let item_width = (config.width
+                    - ((config.columns.saturating_sub(1)) as f64 * config.spacing))
                     / config.columns.max(1) as f64;
                 native_controls::set_native_collection_layout(
                     view,
@@ -1280,9 +1354,15 @@ impl PlatformNativeControls for IosNativeControls {
                 }
             } else {
                 let view = native_controls::create_native_tracking_view();
-                *state = NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_tracking_view);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_tracking_view,
+                );
             }
-            if let (Some(on_enter), Some(on_exit)) = (config.callbacks.on_enter, config.callbacks.on_exit) {
+            if let (Some(on_enter), Some(on_exit)) =
+                (config.callbacks.on_enter, config.callbacks.on_exit)
+            {
                 let target = native_controls::set_native_tracking_view_callbacks(
                     state.view() as id,
                     on_enter,
@@ -1309,8 +1389,11 @@ impl PlatformNativeControls for IosNativeControls {
                 state.view() as id
             } else {
                 let view = native_controls::create_native_stack_view(config.orientation);
-                *state =
-                    NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_stack_view);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_stack_view,
+                );
                 view
             };
             native_controls::set_native_stack_view_spacing(view, config.spacing);
@@ -1351,7 +1434,11 @@ impl PlatformNativeControls for IosNativeControls {
                     config.min_width,
                     config.max_width,
                 );
-                *state = NativeControlState::new(view as *mut c_void, std::ptr::null_mut(), cleanup_sidebar);
+                *state = NativeControlState::new(
+                    view as *mut c_void,
+                    std::ptr::null_mut(),
+                    cleanup_sidebar,
+                );
                 view
             };
             native_controls::set_native_sidebar_width(view, config.sidebar_width);
@@ -1370,6 +1457,11 @@ impl PlatformNativeControls for IosNativeControls {
             let _ = config.items;
             let _ = config.side;
             let _ = config.selected_index;
+            let _ = config.has_inspector;
+            let _ = config.inspector_width;
+            let _ = config.inspector_min_width;
+            let _ = config.inspector_max_width;
+            let _ = config.inspector_collapsed;
             let _ = config.header_button_symbols;
             let _ = config.on_select;
             let _ = config.on_header_button;
@@ -1441,7 +1533,7 @@ impl PlatformNativeControls for IosNativeControls {
     fn set_panel_origin(&self, state: &NativeControlState, x: f64, y: f64) {
         unsafe {
             let frame: ((f64, f64), (f64, f64)) = msg_send![state.view() as id, frame];
-            set_view_frame(state.view() as id, x, y, frame.1.0, frame.1.1);
+            set_view_frame(state.view() as id, x, y, frame.1 .0, frame.1 .1);
         }
     }
 
@@ -1452,7 +1544,7 @@ impl PlatformNativeControls for IosNativeControls {
     fn set_panel_size(&self, state: &NativeControlState, width: f64, height: f64) {
         unsafe {
             let frame: ((f64, f64), (f64, f64)) = msg_send![state.view() as id, frame];
-            set_view_frame(state.view() as id, frame.0.0, frame.0.1, width, height);
+            set_view_frame(state.view() as id, frame.0 .0, frame.0 .1, width, height);
         }
     }
 
@@ -1489,7 +1581,11 @@ impl PlatformNativeControls for IosNativeControls {
         }
     }
 
-    fn get_toolbar_item_frame(&self, _window: *mut c_void, _item_id: &str) -> Option<Bounds<Pixels>> {
+    fn get_toolbar_item_frame(
+        &self,
+        _window: *mut c_void,
+        _item_id: &str,
+    ) -> Option<Bounds<Pixels>> {
         None
     }
 

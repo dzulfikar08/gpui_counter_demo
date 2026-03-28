@@ -2570,10 +2570,28 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().configuring_hosted_content = false;
     }
 
-    fn attach_hosted_surface(&self, host_view: *mut c_void, surface_view: *mut c_void) {
+    fn attach_hosted_surface(
+        &self,
+        host_view: *mut c_void,
+        surface_view: *mut c_void,
+        target: gpui::HostedSurfaceTarget,
+    ) {
         self.0.as_ref().lock().configuring_hosted_content = true;
         unsafe {
-            crate::native_controls::embed_sidebar_surface_view(host_view as id, surface_view as id);
+            match target {
+                gpui::HostedSurfaceTarget::Sidebar => {
+                    crate::native_controls::embed_sidebar_surface_view(
+                        host_view as id,
+                        surface_view as id,
+                    );
+                }
+                gpui::HostedSurfaceTarget::Inspector => {
+                    crate::native_controls::embed_inspector_surface_view(
+                        host_view as id,
+                        surface_view as id,
+                    );
+                }
+            }
         }
         self.0.as_ref().lock().configuring_hosted_content = false;
     }
