@@ -1497,11 +1497,8 @@ impl PlatformNativeControls for MacNativeControls {
 
     fn sidebar_content_size(&self, state: &NativeControlState) -> Option<gpui::Size<Pixels>> {
         unsafe {
-            let content_size = native_controls::embedded_content_size(state.view() as id)?;
-            Some(size(
-                px(content_size.width as f32),
-                px(content_size.height as f32),
-            ))
+            let size = native_controls::embedded_content_size(state.view() as id)?;
+            Some(size(px(size.width as f32), px(size.height as f32)))
         }
     }
 
