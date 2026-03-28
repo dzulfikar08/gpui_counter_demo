@@ -315,7 +315,26 @@ pub struct StackViewConfig {
     pub children: Vec<*mut c_void>,
 }
 
+/// Which window edge hosts a native sidebar pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeSidebarSide {
+    /// Place the sidebar on the leading edge of the window.
+    Leading,
+    /// Place the sidebar on the trailing edge of the window.
+    ///
+    /// On macOS this maps to AppKit's inspector behavior when available so the
+    /// trailing pane uses native toolbar actions and full-height window chrome.
+    Trailing,
+}
+
+impl Default for NativeSidebarSide {
+    fn default() -> Self {
+        Self::Leading
+    }
+}
+
 pub struct SidebarViewConfig<'a> {
+    pub side: NativeSidebarSide,
     pub sidebar_width: f64,
     pub min_width: f64,
     pub max_width: f64,
@@ -684,5 +703,4 @@ pub trait PlatformNativeControls {
     fn show_popover_at_toolbar_item(&self, state: &NativeControlState, toolbar_item: *mut c_void);
 
     fn dismiss_popover(&self, state: &NativeControlState);
-
 }

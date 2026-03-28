@@ -32,6 +32,7 @@ struct SidebarHostData {
     split_view_controller: id,
     split_view: id,
     sidebar_item: id,
+    content_item: id,
     scroll_view: id,
     table_view: id,
     detail_label: id,
@@ -51,6 +52,9 @@ struct SidebarHostData {
     header_on_click: Option<Box<dyn Fn(usize)>>,
     scroll_view_top_constraint: id,
     scroll_view_using_autolayout: bool,
+    sidebar_on_trailing: bool,
+    uses_inspector_behavior: bool,
+    embed_in_sidebar: bool,
 }
 
 struct SidebarCallbacks {
@@ -157,7 +161,11 @@ unsafe fn host_data_ptr(host_view: id) -> *mut SidebarHostData {
 unsafe fn host_data_mut(host_view: id) -> Option<&'static mut SidebarHostData> {
     unsafe {
         let ptr = host_data_ptr(host_view);
-        if ptr.is_null() { None } else { Some(&mut *ptr) }
+        if ptr.is_null() {
+            None
+        } else {
+            Some(&mut *ptr)
+        }
     }
 }
 
@@ -268,7 +276,31 @@ unsafe fn toolbar_has_identifier(toolbar: id, identifier: id) -> bool {
     }
 }
 
-unsafe fn ensure_sidebar_toggle_items(toolbar: id) {
+unsafe fn toolbar_toggle_identifier(uses_inspector_behavior: bool) -> Option<id> {
+    unsafe {
+        use super::super::ns_string;
+
+        if uses_inspector_behavior {
+            Some(ns_string("NSToolbarToggleInspectorItem"))
+        } else {
+            Some(toolbar_toggle_sidebar_identifier())
+        }
+    }
+}
+
+unsafe fn toolbar_tracking_separator_identifier(uses_inspector_behavior: bool) -> Option<id> {
+    unsafe {
+        use super::super::ns_string;
+
+        if uses_inspector_behavior {
+            Some(ns_string("NSToolbarInspectorTrackingSeparatorItem"))
+        } else {
+            Some(toolbar_sidebar_tracking_separator_identifier())
+        }
+    }
+}
+
+unsafe fn ensure_sidebar_toggle_items(toolbar: id, uses_inspector_behavior: bool) {
     unsafe {
         if toolbar == nil {
             return;
@@ -281,33 +313,37 @@ unsafe fn ensure_sidebar_toggle_items(toolbar: id) {
         }
 
         let flexible = toolbar_flexible_space_identifier();
-        let toggle = toolbar_toggle_sidebar_identifier();
-        let separator = toolbar_sidebar_tracking_separator_identifier();
+        let toggle = toolbar_toggle_identifier(uses_inspector_behavior);
+        let separator = toolbar_tracking_separator_identifier(uses_inspector_behavior);
 
         if !toolbar_has_identifier(toolbar, flexible) {
             let _: () = msg_send![toolbar, insertItemWithItemIdentifier: flexible atIndex: 0u64];
         }
-        if !toolbar_has_identifier(toolbar, toggle) {
-            let index: u64 = if toolbar_has_identifier(toolbar, flexible) {
-                1
-            } else {
-                0
-            };
-            let _: () = msg_send![toolbar, insertItemWithItemIdentifier: toggle atIndex: index];
+        if let Some(toggle) = toggle {
+            if !toolbar_has_identifier(toolbar, toggle) {
+                let index: u64 = if toolbar_has_identifier(toolbar, flexible) {
+                    1
+                } else {
+                    0
+                };
+                let _: () = msg_send![toolbar, insertItemWithItemIdentifier: toggle atIndex: index];
+            }
         }
-        if !toolbar_has_identifier(toolbar, separator) {
-            let items: id = msg_send![toolbar, items];
-            let count: u64 = if items != nil {
-                msg_send![items, count]
-            } else {
-                0
-            };
-            let insert_index = count.min(2);
-            let _: () = msg_send![
-                toolbar,
-                insertItemWithItemIdentifier: separator
-                atIndex: insert_index
-            ];
+        if let Some(separator) = separator {
+            if !toolbar_has_identifier(toolbar, separator) {
+                let items: id = msg_send![toolbar, items];
+                let count: u64 = if items != nil {
+                    msg_send![items, count]
+                } else {
+                    0
+                };
+                let insert_index = count.min(2);
+                let _: () = msg_send![
+                    toolbar,
+                    insertItemWithItemIdentifier: separator
+                    atIndex: insert_index
+                ];
+            }
         }
 
         let _: () = msg_send![toolbar, validateVisibleItems];
@@ -338,6 +374,33 @@ unsafe fn configure_sidebar_item(sidebar_item: id, min_width: f64, max_width: f6
         let _: () = msg_send![sidebar_item, setMaximumThickness: max_width];
         // Mirrors Obsidian and AppKit examples: keep window size fixed, resize siblings.
         let _: () = msg_send![sidebar_item, setCollapseBehavior: 2i64];
+
+        let supports_full_height: bool =
+            msg_send![sidebar_item, respondsToSelector: sel!(setAllowsFullHeightLayout:)];
+        if supports_full_height {
+            let _: () = msg_send![sidebar_item, setAllowsFullHeightLayout: 1i8];
+        }
+
+        let supports_separator_style: bool =
+            msg_send![sidebar_item, respondsToSelector: sel!(setTitlebarSeparatorStyle:)];
+        if supports_separator_style {
+            let _: () = msg_send![sidebar_item, setTitlebarSeparatorStyle: 0i64];
+        }
+    }
+}
+
+unsafe fn configure_inspector_item(sidebar_item: id, min_width: f64, max_width: f64) {
+    unsafe {
+        let _: () = msg_send![sidebar_item, setCanCollapse: 1i8];
+        let _: () = msg_send![sidebar_item, setMinimumThickness: min_width];
+        let _: () = msg_send![sidebar_item, setMaximumThickness: max_width];
+        let _: () = msg_send![sidebar_item, setCollapseBehavior: 2i64];
+
+        let supports_resize_collapse: bool =
+            msg_send![sidebar_item, respondsToSelector: sel!(setCanCollapseFromWindowResize:)];
+        if supports_resize_collapse {
+            let _: () = msg_send![sidebar_item, setCanCollapseFromWindowResize: 1i8];
+        }
 
         let supports_full_height: bool =
             msg_send![sidebar_item, respondsToSelector: sel!(setAllowsFullHeightLayout:)];
@@ -442,8 +505,17 @@ extern "C" fn host_view_perform_key_equivalent(this: &Object, _sel: Sel, event: 
                         this as *const Object as id
                     };
                     let app: id = msg_send![class!(NSApplication), sharedApplication];
+                    let toggle_action = host_data_mut(this as *const Object as id)
+                        .map(|host_data| {
+                            if host_data.uses_inspector_behavior {
+                                sel!(toggleInspector:)
+                            } else {
+                                sel!(toggleSidebar:)
+                            }
+                        })
+                        .unwrap_or_else(|| sel!(toggleSidebar:));
                     let handled: i8 =
-                        msg_send![app, sendAction: sel!(toggleSidebar:) to: nil from: sender];
+                        msg_send![app, sendAction: toggle_action to: nil from: sender];
                     if handled != 0 {
                         return 1;
                     }
@@ -456,6 +528,7 @@ extern "C" fn host_view_perform_key_equivalent(this: &Object, _sel: Sel, event: 
 }
 
 pub(crate) unsafe fn create_sidebar(
+    sidebar_on_trailing: bool,
     sidebar_width: f64,
     min_width: f64,
     max_width: f64,
@@ -480,6 +553,14 @@ pub(crate) unsafe fn create_sidebar(
         let split_view: id = msg_send![split_view_controller, splitView];
         let _: () = msg_send![split_view, setVertical: 1i8];
         let _: () = msg_send![split_view, setDividerStyle: 1u64];
+        let split_view_item_class = class!(NSSplitViewItem);
+        let uses_inspector_behavior = sidebar_on_trailing && {
+            let supports_inspector: bool = msg_send![
+                split_view_item_class,
+                respondsToSelector: sel!(inspectorWithViewController:)
+            ];
+            supports_inspector
+        };
 
         // The sidebar pane's view hierarchy depends on embed_in_sidebar:
         //
@@ -636,38 +717,57 @@ pub(crate) unsafe fn create_sidebar(
             let _: () = msg_send![bg_ext, setAutomaticallyPlacesContentView: 0i8];
             let _: () = msg_send![bg_ext, setContentView: content_view];
 
-            // Pin content to top, bottom, trailing — leave leading free so
-            // the extension fills only the sidebar overlap area.
+            // Pin content to the non-overlap edges so the extension only fills
+            // the native sidebar or inspector overlap area.
             let _: () = msg_send![
                 content_view,
                 setTranslatesAutoresizingMaskIntoConstraints: 0i8
             ];
             let cv_top: id = msg_send![content_view, topAnchor];
             let cv_bottom: id = msg_send![content_view, bottomAnchor];
-            let cv_trailing: id = msg_send![content_view, trailingAnchor];
             let cv_leading: id = msg_send![content_view, leadingAnchor];
+            let cv_trailing: id = msg_send![content_view, trailingAnchor];
 
             let ext_top: id = msg_send![bg_ext, topAnchor];
             let ext_bottom: id = msg_send![bg_ext, bottomAnchor];
+            let ext_leading: id = msg_send![bg_ext, leadingAnchor];
             let ext_trailing: id = msg_send![bg_ext, trailingAnchor];
 
-            // Use safeAreaLayoutGuide for the leading edge so the content
-            // starts after the sidebar overlap, leaving room for extension.
+            // Use safeAreaLayoutGuide on the overlap edge so the content starts
+            // after the native sidebar or inspector overlap, leaving room for
+            // the background extension.
             let has_safe_area: bool = msg_send![
                 bg_ext,
                 respondsToSelector: sel!(safeAreaLayoutGuide)
             ];
-            let safe_leading: id = if has_safe_area {
+            let safe_overlap_anchor: id = if has_safe_area {
                 let guide: id = msg_send![bg_ext, safeAreaLayoutGuide];
-                msg_send![guide, leadingAnchor]
+                if sidebar_on_trailing {
+                    msg_send![guide, trailingAnchor]
+                } else {
+                    msg_send![guide, leadingAnchor]
+                }
             } else {
-                msg_send![bg_ext, leadingAnchor]
+                if sidebar_on_trailing {
+                    ext_trailing
+                } else {
+                    ext_leading
+                }
             };
 
             let c1: id = msg_send![cv_top, constraintEqualToAnchor: ext_top];
             let c2: id = msg_send![cv_bottom, constraintEqualToAnchor: ext_bottom];
-            let c3: id = msg_send![cv_trailing, constraintEqualToAnchor: ext_trailing];
-            let c4: id = msg_send![cv_leading, constraintEqualToAnchor: safe_leading];
+            let (c3, c4): (id, id) = if sidebar_on_trailing {
+                (
+                    msg_send![cv_leading, constraintEqualToAnchor: ext_leading],
+                    msg_send![cv_trailing, constraintEqualToAnchor: safe_overlap_anchor],
+                )
+            } else {
+                (
+                    msg_send![cv_trailing, constraintEqualToAnchor: ext_trailing],
+                    msg_send![cv_leading, constraintEqualToAnchor: safe_overlap_anchor],
+                )
+            };
 
             let _: () = msg_send![c1, setActive: 1i8];
             let _: () = msg_send![c2, setActive: 1i8];
@@ -701,16 +801,28 @@ pub(crate) unsafe fn create_sidebar(
         let content_vc: id = msg_send![content_vc, init];
         let _: () = msg_send![content_vc, setView: content_vc_view];
 
-        let sidebar_item: id =
-            msg_send![class!(NSSplitViewItem), sidebarWithViewController: sidebar_vc];
-        configure_sidebar_item(sidebar_item, min_width, max_width);
+        let sidebar_item: id = if uses_inspector_behavior {
+            msg_send![split_view_item_class, inspectorWithViewController: sidebar_vc]
+        } else {
+            msg_send![split_view_item_class, sidebarWithViewController: sidebar_vc]
+        };
+        if uses_inspector_behavior {
+            configure_inspector_item(sidebar_item, min_width, max_width);
+        } else {
+            configure_sidebar_item(sidebar_item, min_width, max_width);
+        }
 
         let content_item: id =
-            msg_send![class!(NSSplitViewItem), splitViewItemWithViewController: content_vc];
+            msg_send![split_view_item_class, splitViewItemWithViewController: content_vc];
         configure_content_item(content_item);
 
-        let _: () = msg_send![split_view_controller, addSplitViewItem: sidebar_item];
-        let _: () = msg_send![split_view_controller, addSplitViewItem: content_item];
+        if sidebar_on_trailing {
+            let _: () = msg_send![split_view_controller, addSplitViewItem: content_item];
+            let _: () = msg_send![split_view_controller, addSplitViewItem: sidebar_item];
+        } else {
+            let _: () = msg_send![split_view_controller, addSplitViewItem: sidebar_item];
+            let _: () = msg_send![split_view_controller, addSplitViewItem: content_item];
+        }
 
         // Enable safe area inset propagation so the sidebar overlap is
         // reflected in the content item's safe area. Our manual constraints
@@ -741,6 +853,7 @@ pub(crate) unsafe fn create_sidebar(
             split_view_controller,
             split_view,
             sidebar_item,
+            content_item,
             scroll_view: scroll,
             table_view: table,
             detail_label,
@@ -760,6 +873,9 @@ pub(crate) unsafe fn create_sidebar(
             header_on_click: None,
             scroll_view_top_constraint: nil,
             scroll_view_using_autolayout: false,
+            sidebar_on_trailing,
+            uses_inspector_behavior,
+            embed_in_sidebar,
         };
         let host_data_ptr = Box::into_raw(Box::new(host_data)) as *mut c_void;
         (*(host_view as *mut Object)).set_ivar::<*mut c_void>(HOST_DATA_IVAR, host_data_ptr);
@@ -915,18 +1031,14 @@ pub(crate) unsafe fn configure_sidebar_window(
             }
 
             if !manage_toolbar {
-                let items: id = msg_send![host_data.split_view_controller, splitViewItems];
-                if items != nil {
-                    let count: u64 = msg_send![items, count];
-                    if count >= 2 {
-                        let content_item: id = msg_send![items, objectAtIndex: 1u64];
-                        let supports_full_height: bool = msg_send![
-                            content_item,
-                            respondsToSelector: sel!(setAllowsFullHeightLayout:)
-                        ];
-                        if supports_full_height {
-                            let _: () = msg_send![content_item, setAllowsFullHeightLayout: 0i8];
-                        }
+                let content_item = host_data.content_item;
+                if content_item != nil {
+                    let supports_full_height: bool = msg_send![
+                        content_item,
+                        respondsToSelector: sel!(setAllowsFullHeightLayout:)
+                    ];
+                    if supports_full_height {
+                        let _: () = msg_send![content_item, setAllowsFullHeightLayout: 0i8];
                     }
                 }
             }
@@ -1103,7 +1215,10 @@ pub(crate) unsafe fn configure_sidebar_window(
                 if active_toolbar != host_data.sidebar_toolbar {
                     let _: () = msg_send![window, setToolbar: host_data.sidebar_toolbar];
                 }
-                ensure_sidebar_toggle_items(host_data.sidebar_toolbar);
+                ensure_sidebar_toggle_items(
+                    host_data.sidebar_toolbar,
+                    host_data.uses_inspector_behavior,
+                );
             }
         } else if host_data.sidebar_toolbar != nil {
             let active_toolbar: id = msg_send![window, toolbar];
@@ -1140,7 +1255,17 @@ pub(crate) unsafe fn set_sidebar_width(
 
         let width =
             clamped_sidebar_width(host_data.split_view, sidebar_width, min_width, max_width);
-        let _: () = msg_send![host_data.split_view, setPosition: width ofDividerAtIndex: 0i64];
+        let divider_position = if host_data.sidebar_on_trailing {
+            let frame: NSRect = msg_send![host_data.split_view, frame];
+            (frame.size.width - width).max(0.0)
+        } else {
+            width
+        };
+        let _: () = msg_send![
+            host_data.split_view,
+            setPosition: divider_position
+            ofDividerAtIndex: 0i64
+        ];
         if host_data.window != nil {
             let _: () = msg_send![host_data.split_view, adjustSubviews];
         }
@@ -1225,6 +1350,21 @@ pub(crate) unsafe fn set_sidebar_items(
         }
 
         delegate as *mut c_void
+    }
+}
+
+pub(crate) unsafe fn sidebar_requires_rebuild(
+    host_view: id,
+    sidebar_on_trailing: bool,
+    embed_in_sidebar: bool,
+) -> bool {
+    unsafe {
+        let Some(host_data) = host_data_mut(host_view) else {
+            return false;
+        };
+
+        host_data.sidebar_on_trailing != sidebar_on_trailing
+            || host_data.embed_in_sidebar != embed_in_sidebar
     }
 }
 

@@ -1,7 +1,7 @@
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyBinding, Menu, MenuItem,
-    NativeSidebarHeaderButton, Window, WindowBounds, WindowOptions, actions, div, native_sidebar,
-    prelude::*, px, size,
+    actions, div, native_sidebar, prelude::*, px, size, App, Bounds, Context, FocusHandle,
+    Focusable, KeyBinding, Menu, MenuItem, NativeSidebarHeaderButton, Window, WindowBounds,
+    WindowOptions,
 };
 
 actions!(native_sidebar_example, [ToggleSidebar]);
@@ -83,6 +83,7 @@ fn main() {
         cx.set_menus(vec![Menu {
             name: "View".into(),
             items: vec![MenuItem::action("Toggle Sidebar", ToggleSidebar)],
+            disabled: false,
         }]);
 
         let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);

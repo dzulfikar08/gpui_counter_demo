@@ -1368,6 +1368,7 @@ impl PlatformNativeControls for IosNativeControls {
             let _ = config.embed_in_host;
             let _ = config.expanded_width;
             let _ = config.items;
+            let _ = config.side;
             let _ = config.selected_index;
             let _ = config.header_button_symbols;
             let _ = config.on_select;

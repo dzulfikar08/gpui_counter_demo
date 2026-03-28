@@ -1,8 +1,8 @@
-use std::ffi::c_void;
+use std::{ffi::c_void, mem};
 
 use cocoa::{base::id, foundation::NSRect};
 use gpui::native_controls::*;
-use gpui::{Bounds, Pixels, point, px, size};
+use gpui::{point, px, size, Bounds, Pixels};
 use objc::{sel, sel_impl};
 
 use crate::native_controls;
@@ -1364,6 +1364,19 @@ impl PlatformNativeControls for MacNativeControls {
         config: SidebarViewConfig,
     ) {
         unsafe {
+            let sidebar_on_trailing = matches!(config.side, NativeSidebarSide::Trailing);
+
+            if state.is_initialized()
+                && native_controls::sidebar_requires_rebuild(
+                    state.view() as id,
+                    sidebar_on_trailing,
+                    config.embed_in_host,
+                )
+            {
+                let old_state = mem::take(state);
+                drop(old_state);
+            }
+
             if state.is_initialized() {
                 let view = state.view() as id;
                 native_controls::set_sidebar_width(
@@ -1410,6 +1423,7 @@ impl PlatformNativeControls for MacNativeControls {
                 // Calling addSubview: here during paint overflows the stack.
             } else {
                 let view = native_controls::create_sidebar(
+                    sidebar_on_trailing,
                     config.sidebar_width,
                     config.min_width,
                     config.max_width,

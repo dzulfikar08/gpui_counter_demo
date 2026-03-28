@@ -334,6 +334,10 @@ name = "native_sidebar"
 path = "examples/native_sidebar.rs"
 
 [[example]]
+name = "native_sidebar_side"
+path = "examples/native_sidebar_side.rs"
+
+[[example]]
 name = "native_dual_surface_sidebar"
 path = "examples/native_dual_surface_sidebar.rs"
 

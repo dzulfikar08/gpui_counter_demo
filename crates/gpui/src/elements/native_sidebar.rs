@@ -1,11 +1,11 @@
 use refineable::Refineable as _;
 use std::rc::Rc;
 
-use crate::platform::native_controls::{NativeControlState, SidebarViewConfig};
+use crate::platform::native_controls::{NativeControlState, NativeSidebarSide, SidebarViewConfig};
 use crate::{
-    AbsoluteLength, AnyView, App, Bounds, DefiniteLength, Element, ElementId, GlobalElementId,
-    HostedContentConfig, Hsla, InspectorElementId, IntoElement, LayoutId, Length, Pixels,
-    Render, SharedString, Style, StyleRefinement, Styled, Window, px,
+    px, AbsoluteLength, AnyView, App, Bounds, DefiniteLength, Element, ElementId, GlobalElementId,
+    HostedContentConfig, Hsla, InspectorElementId, IntoElement, LayoutId, Length, Pixels, Render,
+    SharedString, Style, StyleRefinement, Styled, Window,
 };
 
 #[cfg(target_os = "macos")]
@@ -49,7 +49,8 @@ impl NativeSidebarHeaderButton {
 
 /// Creates a native macOS-style sidebar control backed by `NSSplitViewController`.
 ///
-/// By default, the sidebar's left pane shows a source-list with the provided `items`.
+/// By default, the sidebar's leading pane shows a source-list with the provided
+/// `items`.
 /// Call `.embed_content_in_sidebar(true)` to replace the source list with the GPUI
 /// content view, allowing you to render arbitrary native controls (segmented controls,
 /// outline views, text fields, buttons, etc.) in the sidebar pane.
@@ -61,6 +62,7 @@ pub fn native_sidebar(id: impl Into<ElementId>, items: &[impl AsRef<str>]) -> Na
             .map(|item| SharedString::from(item.as_ref().to_string()))
             .collect(),
         selected_index: None,
+        side: NativeSidebarSide::Leading,
         sidebar_width: 240.0,
         min_sidebar_width: 180.0,
         max_sidebar_width: 420.0,
@@ -83,6 +85,7 @@ pub struct NativeSidebar {
     id: ElementId,
     items: Vec<SharedString>,
     selected_index: Option<usize>,
+    side: NativeSidebarSide,
     sidebar_width: f64,
     min_sidebar_width: f64,
     max_sidebar_width: f64,
@@ -104,8 +107,7 @@ pub struct NativeSidebar {
     on_select: Option<Box<dyn Fn(&SidebarSelectEvent, &mut Window, &mut App) + 'static>>,
     header_title: Option<SharedString>,
     header_buttons: Vec<NativeSidebarHeaderButton>,
-    on_header_click:
-        Option<Box<dyn Fn(&SidebarHeaderClickEvent, &mut Window, &mut App) + 'static>>,
+    on_header_click: Option<Box<dyn Fn(&SidebarHeaderClickEvent, &mut Window, &mut App) + 'static>>,
     sidebar_background_color: Option<Hsla>,
     style: StyleRefinement,
 }
@@ -114,6 +116,16 @@ impl NativeSidebar {
     /// Sets the selected sidebar item.
     pub fn selected_index(mut self, selected_index: Option<usize>) -> Self {
         self.selected_index = selected_index;
+        self
+    }
+
+    /// Sets which side of the split view hosts the native sidebar pane.
+    ///
+    /// On macOS, the trailing side uses AppKit's inspector behavior where
+    /// available so the split view stays native rather than emulating the
+    /// layout in GPUI.
+    pub fn side(mut self, side: NativeSidebarSide) -> Self {
+        self.side = side;
         self
     }
 
@@ -238,6 +250,7 @@ struct SidebarExtraState {
     // AppKit layout work during paint that causes reentrancy and hangs.
     prev_items: Vec<SharedString>,
     prev_selected: Option<usize>,
+    prev_side: NativeSidebarSide,
     prev_sidebar_width: f64,
     prev_min_width: f64,
     prev_max_width: f64,
@@ -256,6 +269,7 @@ impl Default for SidebarExtraState {
             surface_id: None,
             prev_items: Vec::new(),
             prev_selected: None,
+            prev_side: NativeSidebarSide::Leading,
             prev_sidebar_width: 0.0,
             prev_min_width: 0.0,
             prev_max_width: 0.0,
@@ -352,6 +366,7 @@ impl Element for NativeSidebar {
         let has_sidebar_view = sidebar_view.is_some();
         let items = self.items.clone();
         let selected_index = self.selected_index;
+        let side = self.side;
         let sidebar_width = self.sidebar_width.max(120.0);
         let min_sidebar_width = self.min_sidebar_width.max(120.0);
         let max_sidebar_width = self.max_sidebar_width.max(min_sidebar_width);
@@ -412,6 +427,7 @@ impl Element for NativeSidebar {
             let needs_update = !state.native.is_initialized()
                 || state.prev_items != items
                 || state.prev_selected != selected_index
+                || state.prev_side != side
                 || state.prev_sidebar_width != sidebar_width
                 || state.prev_min_width != min_sidebar_width
                 || state.prev_max_width != max_sidebar_width
@@ -436,6 +452,7 @@ impl Element for NativeSidebar {
                     Bounds::default(),
                     scale,
                     SidebarViewConfig {
+                        side,
                         sidebar_width,
                         min_width: min_sidebar_width,
                         max_width: max_sidebar_width,
@@ -454,6 +471,7 @@ impl Element for NativeSidebar {
 
                 state.prev_items = items;
                 state.prev_selected = selected_index;
+                state.prev_side = side;
                 state.prev_sidebar_width = sidebar_width;
                 state.prev_min_width = min_sidebar_width;
                 state.prev_max_width = max_sidebar_width;
