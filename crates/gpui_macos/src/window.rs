@@ -40,7 +40,7 @@ use gpui::{
 };
 use image::RgbaImage;
 
-use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
+use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
 use objc::{
@@ -575,10 +575,10 @@ pub(crate) struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
+    button_layout_changed_callback: Option<Box<dyn FnMut()>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
-    traffic_light_position: Option<Point<Pixels>>,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
@@ -627,72 +627,44 @@ struct MacPanelState {
 }
 
 impl MacWindowState {
-    fn move_traffic_light(&self) {
-        if let Some(traffic_light_position) = self.traffic_light_position {
-            if self.is_fullscreen() {
-                // Moving traffic lights while fullscreen doesn't work,
-                // see https://github.com/zed-industries/zed/issues/4712
-                return;
+    fn window_controls_padding(&self) -> Pixels {
+        unsafe {
+            let close_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowCloseButton
+            ];
+            let min_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
+            ];
+            let zoom_button: id = msg_send![
+                self.native_window,
+                standardWindowButton: NSWindowButton::NSWindowZoomButton
+            ];
+
+            if close_button == nil || min_button == nil || zoom_button == nil {
+                return px(0.0);
             }
 
-            // Traffic lights should be anchored to the native titlebar region.
-            // The effective overlap height can change when the content view is
-            // reparented into split-view panes, which would make button
-            // placement drift during sidebar/mode transitions.
-            let titlebar_height = self.native_titlebar_height();
-
-            unsafe {
-                let close_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowCloseButton
-                ];
-                let min_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowMiniaturizeButton
-                ];
-                let zoom_button: id = msg_send![
-                    self.native_window,
-                    standardWindowButton: NSWindowButton::NSWindowZoomButton
-                ];
-
-                let mut close_button_frame: CGRect = msg_send![close_button, frame];
-                let mut min_button_frame: CGRect = msg_send![min_button, frame];
-                let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
-                let (button_container_height, button_container_is_flipped) = {
-                    let superview: id = msg_send![close_button, superview];
-                    if superview != nil {
-                        let is_flipped: BOOL = msg_send![superview, isFlipped];
-                        (
-                            NSView::frame(superview).size.height as f32,
-                            is_flipped == YES,
-                        )
-                    } else {
-                        (f32::from(titlebar_height), false)
-                    }
-                };
-                let y = if button_container_is_flipped {
-                    traffic_light_position.y
-                } else {
-                    px(button_container_height)
-                        - traffic_light_position.y
-                        - px(close_button_frame.size.height as f32)
-                };
-                let mut origin = point(traffic_light_position.x, y);
-                let button_spacing =
-                    px((min_button_frame.origin.x - close_button_frame.origin.x) as f32);
-
-                close_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![close_button, setFrame: close_button_frame];
-                origin.x += button_spacing;
-
-                min_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![min_button, setFrame: min_button_frame];
-                origin.x += button_spacing;
-
-                zoom_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
-                let _: () = msg_send![zoom_button, setFrame: zoom_button_frame];
-                origin.x += button_spacing;
+            let button_container: id = msg_send![close_button, superview];
+            if button_container != nil {
+                let frame = NSView::frame(button_container);
+                return px((frame.origin.x + frame.size.width) as f32);
             }
+
+            let close_frame: CGRect = msg_send![close_button, frame];
+            let min_frame: CGRect = msg_send![min_button, frame];
+            let zoom_frame: CGRect = msg_send![zoom_button, frame];
+            let leading_margin = close_frame
+                .origin
+                .x
+                .min(min_frame.origin.x)
+                .min(zoom_frame.origin.x);
+            let trailing_edge = (close_frame.origin.x + close_frame.size.width)
+                .max(min_frame.origin.x + min_frame.size.width)
+                .max(zoom_frame.origin.x + zoom_frame.size.width);
+
+            px((leading_margin + trailing_edge) as f32)
         }
     }
 
@@ -969,12 +941,10 @@ impl MacWindow {
                 should_close_callback: None,
                 close_callback: None,
                 appearance_changed_callback: None,
+                button_layout_changed_callback: None,
                 input_handler: None,
                 last_key_equivalent: None,
                 synthetic_drag_counter: 0,
-                traffic_light_position: titlebar
-                    .as_ref()
-                    .and_then(|titlebar| titlebar.traffic_light_position),
                 transparent_titlebar: titlebar
                     .as_ref()
                     .is_none_or(|titlebar| titlebar.appears_transparent),
@@ -1193,7 +1163,6 @@ impl MacWindow {
             NSWindow::setFrameTopLeftPoint_(native_window, window_rect.origin);
             {
                 let mut window_state = window.0.lock();
-                window_state.move_traffic_light();
                 window_state.sheet_parent = sheet_parent;
             }
 
@@ -1332,6 +1301,10 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().titlebar_height()
     }
 
+    fn window_controls_padding(&self) -> Pixels {
+        self.0.as_ref().lock().window_controls_padding()
+    }
+
     fn resize(&mut self, size: Size<Pixels>) {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1423,6 +1396,9 @@ impl PlatformWindow for MacWindow {
         let mut this = self.0.lock();
         this.toolbar = new_toolbar;
         this.configuring_hosted_content = false;
+        drop(this);
+
+        notify_button_layout_changed(self.0.as_ref());
     }
 
     fn focus_native_search_field(&self, target: PlatformNativeSearchFieldTarget, select_all: bool) {
@@ -2311,8 +2287,8 @@ impl PlatformWindow for MacWindow {
             let title = ns_string(title);
             let _: () = msg_send![app, changeWindowsItem:window title:title filename:false];
             let _: () = msg_send![window, setTitle: title];
-            self.0.lock().move_traffic_light();
         }
+        notify_button_layout_changed(self.0.as_ref());
     }
 
     fn get_title(&self) -> String {
@@ -2431,10 +2407,7 @@ impl PlatformWindow for MacWindow {
             let window = self.0.lock().native_window;
             msg_send![window, setDocumentEdited: edited as BOOL]
         }
-
-        // Changing the document edited state resets the traffic light position,
-        // so we have to move it again.
-        self.0.lock().move_traffic_light();
+        notify_button_layout_changed(self.0.as_ref());
     }
 
     fn show_character_palette(&self) {
@@ -2536,6 +2509,10 @@ impl PlatformWindow for MacWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_changed_callback = Some(callback);
+    }
+
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().button_layout_changed_callback = Some(callback);
     }
 
     fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
@@ -2909,7 +2886,6 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
         let window_state = unsafe { get_window_state(this) };
         let window_height = window_state.as_ref().lock().content_size().height;
         let event = unsafe { platform_input_from_native(native_event, Some(window_height), None) };
-
         if let Some(PlatformInput::KeyDown(key_down_event)) = event {
             let ks = &key_down_event.keystroke;
             if ks.modifiers.platform && !is_field_editor_shortcut(ks) {
@@ -2932,14 +2908,16 @@ extern "C" fn handle_key_equivalent(this: &Object, _: Sel, native_event: id) -> 
 }
 
 /// Returns true for shortcuts that NSTextView field editors handle natively
-/// (copy, paste, cut, select-all, undo, redo).  These must NOT be intercepted
-/// by GPUI when a native search field is focused.
+/// (copy, paste, cut, select-all, undo, redo, and line deletion shortcuts like
+/// Cmd+Backspace). These must NOT be intercepted by GPUI when a native search
+/// field is focused.
 fn is_field_editor_shortcut(ks: &gpui::Keystroke) -> bool {
     if !ks.modifiers.platform || ks.modifiers.control || ks.modifiers.alt || ks.modifiers.function {
         return false;
     }
     match ks.key.as_str() {
         "c" | "v" | "x" | "a" => !ks.modifiers.shift,
+        "backspace" => !ks.modifiers.shift,
         "z" => true, // Cmd+Z (undo) and Cmd+Shift+Z (redo)
         _ => false,
     }
@@ -3050,8 +3028,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     return YES;
                 }
 
-                let handled = run_callback(PlatformInput::KeyDown(key_down_event));
-                return handled;
+                return run_callback(PlatformInput::KeyDown(key_down_event));
             }
 
             let handled = run_callback(PlatformInput::KeyDown(key_down_event.clone()));
@@ -3246,24 +3223,27 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
 
 extern "C" fn window_did_change_occlusion_state(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    let lock = &mut *window_state.lock();
-    unsafe {
-        if lock
-            .native_window
-            .occlusionState()
-            .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
-        {
-            lock.move_traffic_light();
-            lock.start_display_link();
-        } else {
-            lock.stop_display_link();
+    {
+        let lock = &mut *window_state.lock();
+        unsafe {
+            if lock
+                .native_window
+                .occlusionState()
+                .contains(NSWindowOcclusionState::NSWindowOcclusionStateVisible)
+            {
+                lock.start_display_link();
+            } else {
+                lock.stop_display_link();
+            }
         }
     }
+
+    notify_button_layout_changed(window_state.as_ref());
 }
 
 extern "C" fn window_did_resize(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
-    window_state.as_ref().lock().move_traffic_light();
+    notify_button_layout_changed(window_state.as_ref());
 }
 
 extern "C" fn window_will_enter_fullscreen(this: &Object, _: Sel, _: id) {
@@ -3340,6 +3320,19 @@ fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
     };
 }
 
+fn notify_button_layout_changed(window_state: &Mutex<MacWindowState>) {
+    let mut callback = {
+        let mut lock = window_state.lock();
+        lock.button_layout_changed_callback.take()
+    };
+
+    if let Some(callback) = callback.as_mut() {
+        callback();
+    }
+
+    window_state.lock().button_layout_changed_callback = callback;
+}
+
 fn flush_pending_resize_callback(window_state: &Arc<Mutex<MacWindowState>>, _reason: &str) {
     let mut lock = window_state.lock();
     if !lock.pending_resize_callback {
@@ -3371,6 +3364,7 @@ extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     lock.start_display_link();
     drop(lock);
     update_window_scale_factor(&window_state);
+    notify_button_layout_changed(window_state.as_ref());
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -3396,10 +3390,10 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
         return;
     }
 
-    lock.move_traffic_light();
-
     let executor = lock.foreground_executor.clone();
     drop(lock);
+
+    notify_button_layout_changed(window_state.as_ref());
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
     // tab flicker when switching between windows in native tabs mode.
@@ -3431,14 +3425,15 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     executor
         .spawn(async move {
+            notify_button_layout_changed(window_state.as_ref());
             let mut lock = window_state.as_ref().lock();
-            lock.move_traffic_light();
             if let Some(mut callback) = lock.activate_callback.take() {
                 drop(lock);
                 callback(is_active);
                 let mut lock = window_state.lock();
                 lock.activate_callback = Some(callback);
-                lock.move_traffic_light();
+                drop(lock);
+                notify_button_layout_changed(window_state.as_ref());
             };
         })
         .detach();
@@ -5971,13 +5966,42 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
         let _: () = msg_send![super(this, class!(NSWindow)), toggleTabBar:nil];
 
         let window_state = get_window_state(this);
-        let mut lock = window_state.as_ref().lock();
-        lock.move_traffic_light();
+        notify_button_layout_changed(window_state.as_ref());
 
+        let mut lock = window_state.as_ref().lock();
         if let Some(mut callback) = lock.toggle_tab_bar_callback.take() {
             drop(lock);
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn field_editor_shortcuts_include_cmd_backspace() {
+        let keystroke = Keystroke {
+            modifiers: Modifiers::command(),
+            key: "backspace".into(),
+            key_char: None,
+            native_key_code: None,
+        };
+
+        assert!(is_field_editor_shortcut(&keystroke));
+    }
+
+    #[test]
+    fn field_editor_shortcuts_do_not_treat_general_cmd_shortcuts_as_native() {
+        let keystroke = Keystroke {
+            modifiers: Modifiers::command(),
+            key: "l".into(),
+            key_char: None,
+            native_key_code: None,
+        };
+
+        assert!(!is_field_editor_shortcut(&keystroke));
     }
 }

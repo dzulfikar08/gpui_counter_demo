@@ -289,6 +289,9 @@ unsafe fn ensure_sidebar_toggle_items(
 
         let mut wanted = Vec::new();
         if show_sidebar_toggle {
+            // FlexibleSpace before the toggle pushes it to the trailing edge of
+            // the sidebar zone (right side of the sidebar header).
+            wanted.push(flexible.clone());
             wanted.push(toolbar_toggle_sidebar_identifier());
             if let Some(separator) = toolbar_tracking_separator_identifier(false) {
                 wanted.push(separator);

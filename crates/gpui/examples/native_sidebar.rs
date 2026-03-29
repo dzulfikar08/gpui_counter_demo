@@ -1,107 +1,62 @@
+//! Minimal native macOS sidebar.
+//!
+//! Demonstrates the exact API surface needed to produce:
+//! - A sidebar that extends into the titlebar (traffic lights in the sidebar zone)
+//! - The toggle button at the trailing (right) edge of the sidebar header
+//!
+//! Both behaviors come from `native_sidebar`'s two defaults:
+//!
+//!   manage_window_chrome: true  — installs NSSplitViewController as
+//!     window.contentViewController, sets NSFullSizeContentViewWindowMask,
+//!     hides the window title, and makes the titlebar transparent.
+//!
+//!   manage_toolbar: true  — creates an NSToolbar whose items are:
+//!     [NSFlexibleSpaceItem, NSToolbarToggleSidebarItem, NSToolbarSidebarTrackingSeparator]
+//!     The FlexibleSpace fills the sidebar zone, pushing the toggle to its
+//!     trailing edge. The TrackingSeparator marks the sidebar/content boundary.
+//!
+//! Neither flag needs to be set explicitly — they are both true by default.
+//!
+//! Collapse state is intentionally not tracked in GPUI. AppKit owns it via the
+//! native toggle button (toggleSidebar: through the responder chain). Mirroring
+//! it in GPUI state and also handling ToggleSidebar causes a double-toggle:
+//! AppKit collapses, then GPUI re-expands on the very next render.
+
 use gpui::{
-    App, Bounds, Context, FocusHandle, Focusable, KeyBinding, Menu, MenuItem,
-    NativeSidebarHeaderButton, Window, WindowBounds, WindowOptions, actions, div, native_sidebar,
-    prelude::*, px, size,
+    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, native_sidebar, prelude::*, px,
+    size,
 };
 
-actions!(native_sidebar_example, [ToggleSidebar]);
+struct Root;
 
-struct SidebarExample {
-    collapsed: bool,
-    focus_handle: FocusHandle,
-}
-
-impl SidebarExample {
-    const ITEMS: [&str; 12] = [
-        "Home",
-        "Projects",
-        "Tasks",
-        "Pull Requests",
-        "Issues",
-        "Discussions",
-        "Builds",
-        "Deployments",
-        "Secrets",
-        "Members",
-        "Settings",
-        "Billing",
-    ];
-}
-
-impl Render for SidebarExample {
+impl Render for Root {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .track_focus(&self.focus_handle)
-            .on_action({
-                let entity = _cx.entity().downgrade();
-                move |_: &ToggleSidebar, _window, cx: &mut App| {
-                    entity
-                        .update(cx, |this, cx| {
-                            this.collapsed = !this.collapsed;
-                            cx.notify();
-                        })
-                        .ok();
-                }
-            })
-            .child(
-                native_sidebar("sidebar", &Self::ITEMS)
-                    .header_title("Navigation")
-                    .header_button(NativeSidebarHeaderButton::new("add", "plus"))
-                    .header_button(NativeSidebarHeaderButton::new(
-                        "filter",
-                        "line.3.horizontal.decrease",
-                    ))
-                    .on_header_click(|event, _window, _cx| {
-                        println!(
-                            "Header button clicked: id={}, index={}",
-                            event.id, event.index
-                        );
-                    })
-                    .on_select(|event, _window, _cx| {
-                        println!("Selected: {} (index {})", event.title, event.index);
-                    })
-                    .selected_index(Some(0))
-                    .sidebar_width(260.0)
-                    .min_sidebar_width(180.0)
-                    .max_sidebar_width(420.0)
-                    .collapsed(self.collapsed)
-                    .size_full(),
-            )
-    }
-}
-
-impl Focusable for SidebarExample {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+        div().size_full().child(
+            // native_sidebar wraps NSSplitViewController. The id must be stable
+            // across renders so GPUI can diff against the previous state and
+            // avoid redundant AppKit calls during paint.
+            native_sidebar("example.sidebar", &["Home", "Settings", "Help"])
+                // Initial sidebar width in logical pixels. AppKit enforces the
+                // min/max range when the user drags the divider.
+                .sidebar_width(240.0)
+                .min_sidebar_width(160.0)
+                .max_sidebar_width(400.0)
+                // size_full() so the element fills the GPUI content view, which
+                // is the detail (right) pane of the NSSplitViewController.
+                .size_full(),
+        )
     }
 }
 
 fn main() {
     gpui_platform::application().run(|cx: &mut App| {
-        cx.bind_keys([KeyBinding::new("cmd-alt-s", ToggleSidebar, None)]);
-        cx.set_menus(vec![Menu {
-            name: "View".into(),
-            items: vec![MenuItem::action("Toggle Sidebar", ToggleSidebar)],
-            disabled: false,
-        }]);
-
-        let bounds = Bounds::centered(None, size(px(1100.), px(760.)), cx);
+        let bounds = Bounds::centered(None, size(px(900.), px(600.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| {
-                cx.new(|cx| {
-                    let focus_handle = cx.focus_handle();
-                    focus_handle.focus(window, cx);
-                    SidebarExample {
-                        collapsed: false,
-                        focus_handle,
-                    }
-                })
-            },
+            |_window, cx| cx.new(|_| Root),
         )
         .unwrap();
 

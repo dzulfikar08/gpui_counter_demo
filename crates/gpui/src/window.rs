@@ -5122,6 +5122,12 @@ impl Window {
         self.platform_window.titlebar_height()
     }
 
+    /// Returns the leading titlebar space reserved by platform-managed window
+    /// controls such as the macOS traffic lights.
+    pub fn window_controls_padding(&self) -> Pixels {
+        self.platform_window.window_controls_padding()
+    }
+
     /// Returns the size of the drawable area within the window.
     pub fn viewport_size(&self) -> Size<Pixels> {
         self.viewport_size

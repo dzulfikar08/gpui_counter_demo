@@ -1145,6 +1145,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         px(0.0)
     }
 
+    /// Returns the leading titlebar space reserved by platform-managed window
+    /// controls such as the macOS traffic lights.
+    fn window_controls_padding(&self) -> Pixels {
+        px(0.0)
+    }
+
     fn safe_area_insets(&self) -> Edges<Pixels> {
         Edges::default()
     }
@@ -2140,7 +2146,6 @@ impl Default for WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
-                traffic_light_position: Default::default(),
                 toolbar_style: WindowToolbarStyle::Automatic,
             }),
             focus: true,
@@ -2169,9 +2174,6 @@ pub struct TitlebarOptions {
     /// Should the default system titlebar be hidden to allow for a custom-drawn titlebar? (macOS and Windows only)
     /// Refer to [`WindowOptions::window_decorations`] on Linux
     pub appears_transparent: bool,
-
-    /// The position of the macOS traffic light buttons
-    pub traffic_light_position: Option<Point<Pixels>>,
 
     /// Specifies how the window's toolbar area should be rendered on macOS.
     pub toolbar_style: WindowToolbarStyle,

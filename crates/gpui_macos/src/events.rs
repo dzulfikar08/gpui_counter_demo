@@ -1,17 +1,17 @@
 use gpui::{
-    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
+    point, px, Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
     NavigationDirection, PinchEvent, Pixels, PlatformInput, PressureStage, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, point, px,
+    ScrollWheelEvent, TouchPhase,
 };
 
 use crate::{
-    LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty,
-    UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
+    kTISPropertyUnicodeKeyLayoutData, LMGetKbdType, NSStringExt,
+    TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, UCKeyTranslate,
 };
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
-    base::{YES, id},
+    base::{id, YES},
     foundation::{NSPoint, NSRect},
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
