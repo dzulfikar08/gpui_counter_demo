@@ -406,6 +406,10 @@ name = "native_toolbar_search"
 path = "examples/native_toolbar_search.rs"
 
 [[example]]
+name = "browser_chrome_sync"
+path = "examples/browser_chrome_sync.rs"
+
+[[example]]
 name = "native_panel"
 path = "examples/native_panel.rs"
 

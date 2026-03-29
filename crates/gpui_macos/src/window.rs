@@ -23,7 +23,7 @@ use cocoa::{
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, HostedContentConfig, KeyDownEvent, Keystroke, Modifiers,
+    ForegroundExecutor, HostedContentConfig, Hsla, KeyDownEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformNativeAlert,
     PlatformNativeAlertStyle, PlatformNativePanel, PlatformNativePanelAnchor,
@@ -562,6 +562,7 @@ pub(crate) struct MacWindowState {
     pub(crate) native_view: NonNull<Object>,
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
+    background_color: Option<Hsla>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -950,6 +951,7 @@ impl MacWindow {
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
+                background_color: None,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -2335,7 +2337,16 @@ impl PlatformWindow for MacWindow {
 
         unsafe {
             this.native_window.setOpaque_(opaque as BOOL);
-            let background_color = if opaque {
+            let background_color = if let Some(color) = this.background_color {
+                let color = gpui::Rgba::from(color);
+                NSColor::colorWithSRGBRed_green_blue_alpha_(
+                    nil,
+                    color.r as f64,
+                    color.g as f64,
+                    color.b as f64,
+                    color.a as f64,
+                )
+            } else if opaque {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
                 // Not using `+[NSColor clearColor]` to avoid broken shadow.
@@ -2385,6 +2396,30 @@ impl PlatformWindow for MacWindow {
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
         self.0.as_ref().lock().background_appearance
+    }
+
+    fn set_background_color(&self, background_color: Option<Hsla>) {
+        let mut this = self.0.as_ref().lock();
+        this.background_color = background_color;
+
+        let opaque = this.background_appearance == WindowBackgroundAppearance::Opaque;
+        unsafe {
+            let background_color = if let Some(color) = this.background_color {
+                let color = gpui::Rgba::from(color);
+                NSColor::colorWithSRGBRed_green_blue_alpha_(
+                    nil,
+                    color.r as f64,
+                    color.g as f64,
+                    color.b as f64,
+                    color.a as f64,
+                )
+            } else if opaque {
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
+            } else {
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
+            };
+            this.native_window.setBackgroundColor_(background_color);
+        }
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

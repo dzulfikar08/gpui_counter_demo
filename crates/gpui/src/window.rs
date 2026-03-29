@@ -5553,6 +5553,11 @@ impl Window {
             .set_background_appearance(background_appearance);
     }
 
+    /// Sets the native window background color used behind transparent titlebar chrome.
+    pub fn set_background_color(&self, background_color: Option<Hsla>) {
+        self.platform_window.set_background_color(background_color);
+    }
+
     /// Mark the window as dirty at the platform level.
     pub fn set_window_edited(&mut self, edited: bool) {
         self.platform_window.set_edited(edited);
