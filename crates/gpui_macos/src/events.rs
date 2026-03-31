@@ -118,6 +118,14 @@ unsafe fn secondary_fn_flag(native_event: id) -> bool {
         .contains(CGEventFlags::CGEventFlagSecondaryFn)
 }
 
+fn should_prefer_character_input(keystroke: &Keystroke) -> bool {
+    keystroke.key_char.is_some()
+        && !keystroke.modifiers.control
+        && !keystroke.modifiers.platform
+        && !keystroke.modifiers.function
+        && !matches!(keystroke.key.as_str(), "enter" | "tab")
+}
+
 pub(crate) unsafe fn platform_input_from_native(
     native_event: id,
     window_height: Option<Pixels>,
@@ -148,10 +156,7 @@ pub(crate) unsafe fn platform_input_from_native(
             }
             NSEventType::NSKeyDown => {
                 let keystroke = parse_keystroke(native_event);
-                let prefer_character_input = keystroke.key_char.is_some()
-                    && !keystroke.modifiers.control
-                    && !keystroke.modifiers.platform
-                    && !keystroke.modifiers.function;
+                let prefer_character_input = should_prefer_character_input(&keystroke);
                 Some(PlatformInput::KeyDown(KeyDownEvent {
                     keystroke,
                     is_held: native_event.isARepeat() == YES,
@@ -607,4 +612,46 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_prefer_character_input;
+    use gpui::{Keystroke, Modifiers};
+
+    #[test]
+    fn test_should_prefer_character_input_for_printable_text() {
+        let keystroke = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "a".into(),
+            key_char: Some("a".into()),
+            native_key_code: None,
+        };
+
+        assert!(should_prefer_character_input(&keystroke));
+    }
+
+    #[test]
+    fn test_should_not_prefer_character_input_for_enter() {
+        let keystroke = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "enter".into(),
+            key_char: Some("\n".into()),
+            native_key_code: None,
+        };
+
+        assert!(!should_prefer_character_input(&keystroke));
+    }
+
+    #[test]
+    fn test_should_not_prefer_character_input_for_tab() {
+        let keystroke = Keystroke {
+            modifiers: Modifiers::default(),
+            key: "tab".into(),
+            key_char: Some("\t".into()),
+            native_key_code: None,
+        };
+
+        assert!(!should_prefer_character_input(&keystroke));
+    }
 }
