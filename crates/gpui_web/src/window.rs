@@ -1,5 +1,6 @@
 use crate::display::WebDisplay;
 use crate::events::{ClickState, WebEventListeners, is_mac_platform};
+use crate::window_environment::{CanvasMetrics, ResizeUpdate, WindowEnvironmentState};
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -52,10 +53,9 @@ pub(crate) struct WebWindowInner {
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
-    pub(crate) last_physical_size: Cell<(u32, u32)>,
-    pub(crate) notify_scale: Cell<bool>,
+    environment: RefCell<WindowEnvironmentState>,
     pub(crate) is_composing: Cell<bool>,
-    mql_handle: RefCell<Option<MqlHandle>>,
+    dpr_watch: RefCell<Option<MediaQuerySubscription>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
 }
 
@@ -178,10 +178,9 @@ impl WebWindow {
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
             pressed_button: Cell::new(None),
-            last_physical_size: Cell::new((0, 0)),
-            notify_scale: Cell::new(false),
+            environment: RefCell::new(WindowEnvironmentState::new(dpr as f64)),
             is_composing: Cell::new(false),
-            mql_handle: RefCell::new(None),
+            dpr_watch: RefCell::new(None),
             pending_physical_size: Cell::new(None),
         });
 
@@ -194,7 +193,7 @@ impl WebWindow {
 
         if let Some(ref observer) = resize_observer {
             inner.observe_canvas(observer);
-            inner.watch_dpr_changes(observer);
+            inner.bind_dpr_watch();
         }
 
         let event_listeners = inner.register_event_listeners();
@@ -218,82 +217,10 @@ impl WebWindow {
                 Some(entry) => entry,
                 None => return,
             };
-
-            let dpr = inner.browser_window.device_pixel_ratio();
-            let dpr_f32 = dpr as f32;
-
-            let (physical_width, physical_height, logical_width, logical_height) =
-                if inner.has_device_pixel_support {
-                    let size: web_sys::ResizeObserverSize = entry
-                        .device_pixel_content_box_size()
-                        .get(0)
-                        .unchecked_into();
-                    let pw = size.inline_size() as u32;
-                    let ph = size.block_size() as u32;
-                    let lw = pw as f64 / dpr;
-                    let lh = ph as f64 / dpr;
-                    (pw, ph, lw as f32, lh as f32)
-                } else {
-                    // Safari fallback: use contentRect (always CSS px).
-                    let rect = entry.content_rect();
-                    let lw = rect.width() as f32;
-                    let lh = rect.height() as f32;
-                    let pw = (lw as f64 * dpr).round() as u32;
-                    let ph = (lh as f64 * dpr).round() as u32;
-                    (pw, ph, lw, lh)
-                };
-
-            let scale_changed = inner.notify_scale.replace(false);
-            let prev = inner.last_physical_size.get();
-            let size_changed = prev != (physical_width, physical_height);
-
-            if !scale_changed && !size_changed {
-                return;
-            }
             inner
-                .last_physical_size
-                .set((physical_width, physical_height));
-
-            // Skip rendering to a zero-size canvas (e.g. display:none).
-            if physical_width == 0 || physical_height == 0 {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size::default();
-                s.scale_factor = dpr_f32;
-                // Still fire the callback so GPUI knows the window is gone.
-                drop(s);
-                let mut cbs = inner.callbacks.borrow_mut();
-                if let Some(ref mut callback) = cbs.resize {
-                    callback(Size::default(), dpr_f32);
-                }
-                return;
-            }
-
-            let max_texture_dimension = inner.state.borrow().max_texture_dimension;
-            let clamped_width = physical_width.min(max_texture_dimension);
-            let clamped_height = physical_height.min(max_texture_dimension);
-
-            inner
-                .pending_physical_size
-                .set(Some((clamped_width, clamped_height)));
-
-            {
-                let mut s = inner.state.borrow_mut();
-                s.bounds.size = Size {
-                    width: px(logical_width),
-                    height: px(logical_height),
-                };
-                s.scale_factor = dpr_f32;
-            }
-
-            let new_size = Size {
-                width: px(logical_width),
-                height: px(logical_height),
-            };
-
-            let mut cbs = inner.callbacks.borrow_mut();
-            if let Some(ref mut callback) = cbs.resize {
-                callback(new_size, dpr_f32);
-            }
+                .environment
+                .borrow_mut()
+                .queue_resize(inner.metrics_from_resize_entry(&entry));
         })
     }
 }
@@ -305,6 +232,8 @@ impl WebWindowInner {
 
         let this = Rc::clone(self);
         let closure = Closure::new(move || {
+            this.reconcile_environment();
+
             {
                 let mut callbacks = this.callbacks.borrow_mut();
                 if let Some(ref mut callback) = callbacks.request_frame {
@@ -345,30 +274,149 @@ impl WebWindowInner {
         }
     }
 
-    fn watch_dpr_changes(self: &Rc<Self>, observer: &web_sys::ResizeObserver) {
+    fn metrics_from_resize_entry(&self, entry: &web_sys::ResizeObserverEntry) -> CanvasMetrics {
+        let dpr = self.browser_window.device_pixel_ratio();
+        let scale_factor = dpr as f32;
+
+        let (physical_width, physical_height, logical_width, logical_height) =
+            if self.has_device_pixel_support {
+                let size: web_sys::ResizeObserverSize = entry
+                    .device_pixel_content_box_size()
+                    .get(0)
+                    .unchecked_into();
+                let physical_width = size.inline_size() as u32;
+                let physical_height = size.block_size() as u32;
+                let logical_width = physical_width as f64 / dpr;
+                let logical_height = physical_height as f64 / dpr;
+                (
+                    physical_width,
+                    physical_height,
+                    logical_width as f32,
+                    logical_height as f32,
+                )
+            } else {
+                // Safari fallback: use contentRect (always CSS px).
+                let rect = entry.content_rect();
+                let logical_width = rect.width() as f32;
+                let logical_height = rect.height() as f32;
+                let physical_width = (logical_width as f64 * dpr).round() as u32;
+                let physical_height = (logical_height as f64 * dpr).round() as u32;
+                (
+                    physical_width,
+                    physical_height,
+                    logical_width,
+                    logical_height,
+                )
+            };
+
+        CanvasMetrics {
+            physical_width,
+            physical_height,
+            logical_width,
+            logical_height,
+            scale_factor,
+        }
+    }
+
+    fn measure_canvas_metrics(&self) -> CanvasMetrics {
+        let rect = self.canvas.get_bounding_client_rect();
+        let dpr = self.browser_window.device_pixel_ratio();
+        let logical_width = rect.width() as f32;
+        let logical_height = rect.height() as f32;
+        let physical_width = (logical_width as f64 * dpr).round() as u32;
+        let physical_height = (logical_height as f64 * dpr).round() as u32;
+
+        CanvasMetrics {
+            physical_width,
+            physical_height,
+            logical_width,
+            logical_height,
+            scale_factor: dpr as f32,
+        }
+    }
+
+    fn reconcile_environment(self: &Rc<Self>) {
         let current_dpr = self.browser_window.device_pixel_ratio();
-        let media_query =
-            format!("(resolution: {current_dpr}dppx), (-webkit-device-pixel-ratio: {current_dpr})");
-        let Some(mql) = self.browser_window.match_media(&media_query).ok().flatten() else {
+        let measured_metrics = {
+            let environment = self.environment.borrow();
+            environment
+                .needs_measurement()
+                .then(|| self.measure_canvas_metrics())
+        };
+        let max_texture_dimension = self.state.borrow().max_texture_dimension;
+        let update = self.environment.borrow_mut().reconcile(
+            current_dpr,
+            measured_metrics,
+            max_texture_dimension,
+        );
+
+        if update.media_query.is_some() {
+            self.bind_dpr_watch();
+        }
+
+        if let Some(resize) = update.resize {
+            self.apply_resize_update(resize);
+        }
+    }
+
+    fn apply_resize_update(&self, resize: ResizeUpdate) {
+        match resize {
+            ResizeUpdate::Hidden { scale_factor } => {
+                self.pending_physical_size.set(None);
+
+                let mut state = self.state.borrow_mut();
+                state.bounds.size = Size::default();
+                state.scale_factor = scale_factor;
+                drop(state);
+
+                let mut callbacks = self.callbacks.borrow_mut();
+                if let Some(ref mut callback) = callbacks.resize {
+                    callback(Size::default(), scale_factor);
+                }
+            }
+            ResizeUpdate::Visible {
+                logical_width,
+                logical_height,
+                physical_width,
+                physical_height,
+                scale_factor,
+            } => {
+                self.pending_physical_size
+                    .set(Some((physical_width, physical_height)));
+
+                let new_size = Size {
+                    width: px(logical_width),
+                    height: px(logical_height),
+                };
+
+                {
+                    let mut state = self.state.borrow_mut();
+                    state.bounds.size = new_size;
+                    state.scale_factor = scale_factor;
+                }
+
+                let mut callbacks = self.callbacks.borrow_mut();
+                if let Some(ref mut callback) = callbacks.resize {
+                    callback(new_size, scale_factor);
+                }
+            }
+        }
+    }
+
+    fn bind_dpr_watch(self: &Rc<Self>) {
+        let query = {
+            let environment = self.environment.borrow();
+            environment.current_media_query().map(str::to_owned)
+        };
+        let Some(query) = query else {
             return;
         };
 
         let this = Rc::clone(self);
-        let observer = observer.clone();
-
-        let closure = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-            this.notify_scale.set(true);
-            this.observe_canvas(&observer);
-            this.watch_dpr_changes(&observer);
-        });
-
-        mql.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())
-            .ok();
-
-        *self.mql_handle.borrow_mut() = Some(MqlHandle {
-            mql,
-            _closure: closure,
-        });
+        *self.dpr_watch.borrow_mut() =
+            MediaQuerySubscription::new(&self.browser_window, &query, move |_event| {
+                this.environment.borrow_mut().queue_dpr_change();
+            });
     }
 
     pub(crate) fn register_visibility_change(
@@ -455,15 +503,30 @@ fn current_appearance(browser_window: &web_sys::Window) -> WindowAppearance {
     }
 }
 
-struct MqlHandle {
+struct MediaQuerySubscription {
     mql: web_sys::MediaQueryList,
-    _closure: Closure<dyn FnMut(JsValue)>,
+    callback: Closure<dyn FnMut(JsValue)>,
 }
 
-impl Drop for MqlHandle {
+impl MediaQuerySubscription {
+    fn new(
+        browser_window: &web_sys::Window,
+        query: &str,
+        handler: impl FnMut(JsValue) + 'static,
+    ) -> Option<Self> {
+        let mql = browser_window.match_media(query).ok().flatten()?;
+        let callback = Closure::<dyn FnMut(JsValue)>::new(handler);
+        mql.add_event_listener_with_callback("change", callback.as_ref().unchecked_ref())
+            .ok()?;
+
+        Some(Self { mql, callback })
+    }
+}
+
+impl Drop for MediaQuerySubscription {
     fn drop(&mut self) {
         self.mql
-            .remove_event_listener_with_callback("change", self._closure.as_ref().unchecked_ref())
+            .remove_event_listener_with_callback("change", self.callback.as_ref().unchecked_ref())
             .ok();
     }
 }

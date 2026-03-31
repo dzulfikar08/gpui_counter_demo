@@ -139,6 +139,25 @@ impl Drop for AppRefMut<'_> {
 /// You won't interact with this type much outside of initial configuration and startup.
 pub struct Application(Rc<AppCell>);
 
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static WEB_APP_KEEPALIVE: RefCell<FxHashMap<usize, Rc<AppCell>>> = RefCell::new(FxHashMap::default());
+}
+
+#[cfg(target_family = "wasm")]
+fn retain_web_app(app: &Rc<AppCell>) {
+    WEB_APP_KEEPALIVE.with(|apps| {
+        apps.borrow_mut().insert(Rc::as_ptr(app) as usize, app.clone());
+    });
+}
+
+#[cfg(target_family = "wasm")]
+fn release_web_app(app: &Weak<AppCell>) {
+    WEB_APP_KEEPALIVE.with(|apps| {
+        apps.borrow_mut().remove(&(Weak::as_ptr(app) as usize));
+    });
+}
+
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
 impl Application {
@@ -184,6 +203,9 @@ impl Application {
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
+
+        #[cfg(target_family = "wasm")]
+        retain_web_app(&this);
         platform.run(Box::new(move || {
             let cx = &mut *this.borrow_mut();
             on_finish_launching(cx);
@@ -842,6 +864,9 @@ impl App {
         }
 
         self.quitting = false;
+
+        #[cfg(target_family = "wasm")]
+        release_web_app(&self.this);
     }
 
     /// Get the id of the current keyboard layout
