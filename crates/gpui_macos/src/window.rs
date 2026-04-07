@@ -1,5 +1,7 @@
 use crate::{
-    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, events::platform_input_from_native,
+    BoolExt, DisplayLink, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
+    TISGetInputSourceProperty, events::platform_input_from_native,
+    kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     mac_native_controls::MacNativeControls, ns_string, renderer,
 };
 use anyhow::Result;
@@ -40,6 +42,9 @@ use gpui::{
 };
 use image::RgbaImage;
 
+use core_foundation::base::{CFRelease, CFTypeRef};
+use core_foundation_sys::base::CFEqual;
+use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
@@ -2997,6 +3002,37 @@ extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
 //   - `option-4` should go to end of line (same as $) when that binding is configured
 //  Japanese (Romaji) layout:
 //   - type `a i left down up enter enter` should create an unmarked text "愛"
+//   - In vim mode with `jj` bound in insert mode, typing `j i` with Japanese IME should
+//     produce "じ", not "jい"
+unsafe fn is_ime_input_source_active() -> bool {
+    let source = unsafe { TISCopyCurrentKeyboardInputSource() };
+    if source.is_null() {
+        return false;
+    }
+
+    let source_type =
+        unsafe { TISGetInputSourceProperty(source, kTISPropertyInputSourceType as *const c_void) };
+    let is_input_mode = !source_type.is_null()
+        && unsafe {
+            CFEqual(
+                source_type as CFTypeRef,
+                kTISTypeKeyboardInputMode as CFTypeRef,
+            ) != 0
+        };
+
+    let is_ascii = unsafe {
+        TISGetInputSourceProperty(
+            source,
+            kTISPropertyInputSourceIsASCIICapable as *const c_void,
+        )
+    };
+    let is_ascii_capable =
+        !is_ascii.is_null() && unsafe { CFBooleanGetValue(is_ascii as CFBooleanRef) };
+
+    unsafe { CFRelease(source as CFTypeRef) };
+    is_input_mode && !is_ascii_capable
+}
+
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
@@ -3048,7 +3084,22 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
             // and keys with function, as the input handler swallows them.
             // and keys with platform (Cmd), so that Cmd+key events (e.g. Cmd+`) are not
             // consumed by the IME on non-QWERTY / dead-key layouts.
+            let is_ime_printable_key = !is_composing
+                && key_down_event
+                    .keystroke
+                    .key_char
+                    .as_ref()
+                    .is_some_and(|key_char| key_char.chars().all(|c| !c.is_control()))
+                && !key_down_event.keystroke.modifiers.control
+                && !key_down_event.keystroke.modifiers.function
+                && !key_down_event.keystroke.modifiers.platform
+                && unsafe { is_ime_input_source_active() }
+                && with_input_handler(this, |input_handler| {
+                    input_handler.query_prefers_ime_for_printable_keys()
+                })
+                .unwrap_or(false);
             if is_composing
+                || is_ime_printable_key
                 || (key_down_event.keystroke.key_char.is_none()
                     && !key_down_event.keystroke.modifiers.control
                     && !key_down_event.keystroke.modifiers.function

@@ -1788,6 +1788,13 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[allow(dead_code)]
+    pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .unwrap_or(false)
+    }
+
     #[cfg_attr(
         any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
         allow(dead_code)
@@ -1998,6 +2005,12 @@ pub trait InputHandler: 'static {
     /// Returns whether this handler is accepting text input to be inserted.
     fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
+    }
+
+    /// Returns whether printable keys should be routed to the IME before keybinding
+    /// matching when a non-ASCII input source is active.
+    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        false
     }
 }
 

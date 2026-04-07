@@ -61,7 +61,7 @@ impl PlatformAtlas for MetalAtlas {
 
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
-        let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {
+        let Some(id) = lock.tiles_by_key.remove(key).map(|v| v.texture_id) else {
             return;
         };
 
@@ -84,7 +84,6 @@ impl PlatformAtlas for MetalAtlas {
 
             if texture.is_unreferenced() {
                 textures.free_list.push(id.index as usize);
-                lock.tiles_by_key.remove(key);
             } else {
                 *texture_slot = Some(texture);
             }
@@ -259,3 +258,70 @@ impl MetalAtlasTexture {
 struct AssertSend<T>(T);
 
 unsafe impl<T> Send for AssertSend<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    fn create_atlas() -> Option<MetalAtlas> {
+        let device = metal::Device::system_default()?;
+        Some(MetalAtlas::new(device, true))
+    }
+
+    fn make_image_key(image_id: usize, frame_index: usize) -> AtlasKey {
+        AtlasKey::Image(gpui::RenderImageParams {
+            image_id: gpui::ImageId(image_id),
+            frame_index,
+        })
+    }
+
+    fn insert_tile(atlas: &MetalAtlas, key: &AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
+        atlas
+            .get_or_insert_with(key, &mut || {
+                let byte_count = (size.width.0 as usize) * (size.height.0 as usize) * 4;
+                Ok(Some((size, Cow::Owned(vec![0u8; byte_count]))))
+            })
+            .expect("allocation should succeed")
+            .expect("callback should return a tile")
+    }
+
+    #[test]
+    fn remove_clears_stale_keys() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+
+        let size = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(64),
+        };
+
+        let key_a = make_image_key(1, 0);
+        let key_b = make_image_key(2, 0);
+        let key_c = make_image_key(3, 0);
+
+        let tile_a = insert_tile(&atlas, &key_a, size);
+        let tile_b = insert_tile(&atlas, &key_b, size);
+        let tile_c = insert_tile(&atlas, &key_c, size);
+
+        assert_eq!(tile_a.texture_id, tile_b.texture_id);
+        assert_eq!(tile_b.texture_id, tile_c.texture_id);
+
+        atlas.remove(&key_a);
+        atlas.remove(&key_b);
+        atlas.remove(&key_c);
+
+        let tile_a2 = insert_tile(&atlas, &key_a, size);
+        let _texture = atlas.metal_texture(tile_a2.texture_id);
+    }
+
+    #[test]
+    fn remove_missing_key_is_noop() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+
+        atlas.remove(&make_image_key(999, 0));
+    }
+}
