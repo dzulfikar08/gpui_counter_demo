@@ -5,7 +5,7 @@ for Rust, designed to support a wide variety of applications.
 
 ## Counter demo (this repo)
 
-This repository includes a minimal runnable app in `crates/counter_demo`.
+This repository is a **fork** of `Glass-HQ/gpui`, tailored to provide a minimal runnable app in `crates/counter_demo`.
 
 Run it from the repo root:
 
