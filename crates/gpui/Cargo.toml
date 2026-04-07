@@ -70,12 +70,14 @@ profiling.workspace = true
 proptest = { workspace = true, optional = true }
 rand.workspace = true
 raw-window-handle = "0.6"
+regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
+    "raster-images",
 ] }
 usvg = { version = "0.45.0", default-features = false }
 schemars.workspace = true
@@ -91,11 +93,11 @@ sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
 gpui_util.workspace = true
+ttf-parser = "0.25"
 uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
-circular-buffer.workspace = true
 spin = "0.10.0"
 pollster.workspace = true
 url.workspace = true
